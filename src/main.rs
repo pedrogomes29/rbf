@@ -4,7 +4,6 @@ use std::env;
 
 mod benchmarks;
 mod bloom;
-mod crdt;
 mod rateless_bloom;
 mod riblt;
 mod sync;
@@ -28,19 +27,7 @@ fn main() {
     }
 
     match args[1].to_lowercase().as_str() {
-        "gset" => benchmarks::algorithms::run_gset_experiment(),
-
-        // NOTE: AWSets generated with 20% of elements removed. This value is pretty conservative for
-        // the particular study scenario of 15% of deleted or removed posts as in mainstream social
-        // media [1].
-        //
-        // [1]: https://www.researchgate.net/publication/367503309_Engagement_with_fact-checked_posts_on_Reddit
-        "awset" => benchmarks::algorithms::run_awset_experiment(),
-
-        "pncounter" => benchmarks::algorithms::run_pncounter_experiment(),
-
-        "ratelessbf" => benchmarks::rateless_bloom::run_gset_experiment(),
-
+        "variable_size" => benchmarks::algorithms::run_variable_size_experiment(),
         _ => unreachable!(),
     };
 }

@@ -1,28 +1,26 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fmt::Display,
-    hash::{BuildHasher, RandomState},
+    hash::{BuildHasher, Hash, RandomState},
     marker::PhantomData,
     mem,
 };
 
-use crate::{
-    crdt::{Decompose, Extract, Measure}, rateless_bloom::{StoppingStrategyFactory}, riblt::RatelessIBLT, tracker::{DefaultEvent, DefaultTracker, Telemetry}
-};
+use crate::{rateless_bloom::StoppingStrategyFactory, riblt::RatelessIBLT, sync::Measure, tracker::{DefaultEvent, DefaultTracker, Telemetry}};
 
-use super::{Algorithm, BuildRatelessFilter, Dispatcher};
+use super::{Algorithm, BuildRatelessFilter};
 
 const WINDOW_SIZE: usize = 1;
 const MAX_NR_RUNS: usize = 1000;
 
 #[derive(Clone, Copy, Debug)]
-pub struct RBloomRibltHashes<T,F> {
+pub struct RBloomRIBLT<T,F> {
     m_ratio: f64,
     stopping_strategy_factory: F,
     _marker: PhantomData<T>,
 }
 
-impl<T, F> RBloomRibltHashes<T,F> {
+impl<T, F> RBloomRIBLT<T,F> {
     #[inline]
     #[must_use]
     pub fn new(m_ratio: f64, stopping_strategy_factory: F) -> Self {
@@ -34,8 +32,8 @@ impl<T, F> RBloomRibltHashes<T,F> {
     }
 }
 
-impl<T, F> Display for RBloomRibltHashes<T,F>
-where T:Extract, F:StoppingStrategyFactory<T::Item>{
+impl<T, F> Display for RBloomRIBLT<T,F>
+where T:Hash, F:StoppingStrategyFactory<T>{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -45,23 +43,18 @@ where T:Extract, F:StoppingStrategyFactory<T::Item>{
     }
 }
 
-impl<T,F> BuildRatelessFilter<T> for RBloomRibltHashes<T,F> 
-where T: Extract,  {}
+impl<T,F> BuildRatelessFilter<T> for RBloomRIBLT<T,F> 
+where T: Hash,  {}
 
 
-impl<T,F> Dispatcher<T> for RBloomRibltHashes<T,F> where
-    T: Clone + Decompose<Decomposition = T> + Extract
-{
-}
-
-impl<T,F> Algorithm<T> for RBloomRibltHashes<T,F>
+impl<T,F> Algorithm<T> for RBloomRIBLT<T,F>
 where
-    T: Clone + Decompose<Decomposition = T> + Default + Extract + Measure,
-    F:StoppingStrategyFactory<T::Item>
+    T: Clone + Hash + Measure + Eq,
+    F:StoppingStrategyFactory<T>
 {
     type Tracker = DefaultTracker;
 
-    fn sync(&self, local: &mut T, remote: &mut T, tracker: &mut Self::Tracker) {
+    fn sync(&self, mut local: Vec<T>, mut remote: Vec<T>, tracker: &mut Self::Tracker) {
         assert!(
             tracker.is_ready(),
             "tracker should be ready, i.e., no captured events and not finished"
@@ -71,20 +64,9 @@ where
 
         let hasher = RandomState::new();
 
-        // 1. Create a bloom filter from the local join-deocompositions and send it to the remote replica.
-        let local_decompositions = local.split();
-        let local_decompositions_extracted: Vec<_> =
-            local_decompositions.iter().map(|d| d.extract()).collect();
-
-        let mut local_filter = self.filter_from(&local_decompositions, self.m_ratio);
-
-        let remote_decompositions = remote.split();
-        let remote_decompositions_extracted: Vec<_> =
-            remote_decompositions.iter().map(|d| d.extract()).collect();
-
-        
-        let stopping_strategy = self.stopping_strategy_factory.create(remote_decompositions_extracted, local_decompositions.len());
-
+        // 1. Create a rateless bloom filter from the local set and send it to the remote replica.
+        let mut local_filter = self.filter_from(local.clone(), self.m_ratio);
+        let stopping_strategy = self.stopping_strategy_factory.create(remote.clone(), local.len());
         local_filter.extend_until(stopping_strategy);
         
         tracker.register(DefaultEvent::LocalToRemote {
@@ -95,11 +77,11 @@ where
 
         // 2. Partion the remote join-decompositions into *probably* present in both replicas or
         //    *definitely not* present in the local replica.
-        let (remote_common, local_unknown) = self.partition(&local_filter, remote.split());
+        let (remote_common, local_unknown) = self.partition(&local_filter, remote.clone());
 
         // 3. Build a bloom filter from the partion of *probably* common join-decompositions
-        let mut remote_filter = self.filter_from(&remote_common, self.m_ratio);
-        let stopping_strategy = self.stopping_strategy_factory.create(local_decompositions_extracted, remote_common.len());
+        let mut remote_filter = self.filter_from(remote_common.clone(), self.m_ratio);
+        let stopping_strategy = self.stopping_strategy_factory.create(local.clone(), remote_common.len());
 
         
         remote_filter.extend_until(
@@ -114,19 +96,15 @@ where
             download: tracker.download(),
         });
 
-        let (local_common, remote_unknown) = self.partition(&remote_filter, local_decompositions);
+        let (local_common, remote_unknown) = self.partition(&remote_filter, local.clone());
 
         // 5. Calculate the hashes of the *probably* common join-decompositions and put them into the sketch
         //    to be streamed for synchronization
         let local_hashes = {
             let mut local_hashes = HashMap::new();
-            let mut state = T::default();
-            state.join(local_common);
-            state.split().into_iter().for_each(|d| {
-                let item = d.extract();
-                let item_hash = hasher.hash_one(item);
-
-                local_hashes.insert(item_hash, d);
+            local_common.into_iter().for_each(|elem| {
+                let elem_hash = hasher.hash_one(&elem);
+                local_hashes.insert(elem_hash, elem);
             });
             local_hashes
         };
@@ -136,13 +114,9 @@ where
         //    to be streamed for synchronization (same as 4)
         let remote_hashes = {
             let mut remote_hashes = HashMap::new();
-            let mut state = T::default();
-            state.join(remote_common);
-            state.split().into_iter().for_each(|d| {
-                let item = d.extract();
-                let item_hash = hasher.hash_one(item);
-
-                remote_hashes.insert(item_hash, d);
+            remote_common.into_iter().for_each(|elem| {
+                let elem_hash = hasher.hash_one(&elem);
+                remote_hashes.insert(elem_hash, elem);
             });
             remote_hashes
         };
@@ -162,7 +136,7 @@ where
         let remote_only_hashes_fp = remote_iblt.get_local_only_symbols();
         let local_only_hashes_fp = remote_iblt.get_remote_only_symbols();
 
-        let remote_only_decompositions_fp: Vec<_> = remote_only_hashes_fp
+        let remote_only_elements_fp: Vec<_> = remote_only_hashes_fp
             .into_iter()
             .map(|hash| remote_hashes[&hash].clone())
             .collect();
@@ -171,7 +145,7 @@ where
         //    Send local only state due to false positives
         //    Send remote only hashes to request for remote only state due to false positives
         tracker.register(DefaultEvent::RemoteToLocal {
-            state: remote_only_decompositions_fp
+            state: remote_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
                 .sum(),
@@ -179,14 +153,14 @@ where
             download: tracker.download(),
         });
 
-        let local_only_decompositions_fp: Vec<_> = local_only_hashes_fp
+        let local_only_elements_fp: Vec<_> = local_only_hashes_fp
             .into_iter()
             .map(|hash| local_hashes[&hash].clone())
             .collect();
 
         // 8. Send remote only state due to false positives
         tracker.register(DefaultEvent::LocalToRemote {
-            state: local_only_decompositions_fp
+            state: local_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
                 .sum(),
@@ -194,57 +168,69 @@ where
             upload: tracker.upload(),
         });
 
-        // 9. Join the appropriate join-decompositions to each replica.
-        remote.join(remote_unknown);
-        remote.join(local_only_decompositions_fp);
+        // 9. Sanity Check
+        remote.extend( remote_unknown);
+        remote.extend( local_only_elements_fp);
 
-        local.join(local_unknown);
-        local.join(remote_only_decompositions_fp);
+        local.extend( local_unknown);
+        local.extend( remote_only_elements_fp);
 
-        // 10. Sanity Check.
-        tracker.finish(<T as Measure>::false_matches(local, remote));
+
+        let local_set: HashSet<T> = local.into_iter().collect();
+        let remote_set: HashSet<T> = remote.into_iter().collect();
+
+        // Elements only in local_vec
+        let local_only = local_set
+            .difference(&remote_set);
+
+        // Elements only in remote_vec
+        let remote_only = remote_set
+            .difference(&local_set);
+
+        let false_matches = local_only.count() + remote_only.count();
+        tracker.finish(false_matches);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crdt::GSet, rateless_bloom::angle_heuristic::AngleHeuristicFactory, tracker::Bandwidth};
+    use crate::{rateless_bloom::angle_heuristic::AngleHeuristicFactory, tracker::Bandwidth};
 
     #[test]
     fn test_sync() {
-        let mut local = {
-            let mut gset = GSet::new();
+        let local = {
+            let mut local = Vec::new();
             let items = "a b c d e f g h i j k l"
                 .split_whitespace()
                 .collect::<Vec<_>>();
 
             for item in items {
-                gset.insert(item.to_string());
+                local.push(item.to_string());
             }
 
-            gset
+            local
         };
 
-        let mut remote = {
-            let mut gset = GSet::new();
+        let remote = {
+            let mut remote = Vec::new();
             let items = "m n o p q r s t u v w x y z"
                 .split_whitespace()
                 .collect::<Vec<_>>();
 
             for item in items {
-                gset.insert(item.to_string());
+                remote.push(item.to_string());
             }
 
-            gset
+            remote
         };
 
         let (download, upload) = (Bandwidth::Kbps(0.5), Bandwidth::Kbps(0.5));
         let mut tracker = DefaultTracker::new(download, upload);
         let stopping_strategy_factory = AngleHeuristicFactory::new(1.0, 1);
-        let bloom_buckets = RBloomRibltHashes::new(0.5, stopping_strategy_factory);
+        let bloom_buckets = RBloomRIBLT::new(0.5, stopping_strategy_factory);
 
-        bloom_buckets.sync(&mut local, &mut remote, &mut tracker);
+        bloom_buckets.sync(local, remote, &mut tracker);
         assert_eq!(tracker.false_matches(), 0);
 
         let events = tracker.events();

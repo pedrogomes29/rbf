@@ -53,7 +53,7 @@ similarities = []
 percent_formatter = ticker.PercentFormatter()
 byte_formatter = ticker.EngFormatter(unit="B")
 bit_formatter = ticker.EngFormatter(unit="b")
-EXPERIENCES = ["up","symm","down"]
+EXPERIENCES = ["symm"]
 algorithm_abbreviations = {
     "Baseline": "Baseline",
     "Bucketing": "Bu",
@@ -131,29 +131,8 @@ def read_experiments(f: TextIOWrapper, nr_experiments:int, include: set[str] = N
                     algo = algo._replace(hidden=True)
                                 
                   
-                visible = False #True if the algorithm + configuration is to be displayed
-
-                if algo.name=="Bloom+Bucketing" and algo.params.get('\\epsilon')=='1\\%' and algo.params.get('f_{ld}') =='0.2':
-                    visible = True
-                if algo.name=="Bloom+Rateless" and algo.params.get('\\epsilon')=='1\\%':
-                    visible = True
-                if algo.name=='Rateless':
-                    visible = True
-                if algo.name=='Baseline':
-                    visible = True
-                if algo.name=='Bucketing' and algo.params.get('f_{ld}') in ['0.2','1']:
-                    visible = True
-              
-                """
-                visible = False
-                    
-                if algo.name=="RBloom+Rateless+Heuristic" and algo.params.get('angle')=='0.5':
-                    visible = True
-                if algo.name=="RBloom+Rateless+Similarity" and algo.params.get('sim')=='0.99':
-                    visible = True
-                if algo.name=='RBloom+Rateless+NoParams':
-                    visible = True      
-                """                                        
+                visible = True
+                                                     
                 if not visible:
                     algo = algo._replace(hidden=True)
   
@@ -263,6 +242,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
     ax.grid(linestyle="--", linewidth=0.5, alpha=0.75)
     ax.set_xlabel("Similarity", fontsize=25)
     ax.set_ylabel(metric_name, fontsize=25, labelpad=8)
+    ax.set_ylim(top=1_000_000)
     ax.tick_params(axis="both", labelsize=20)
 
     legend_handles = []
@@ -275,7 +255,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
         label = fmt_label(algo)
         marker = marker_dict[algo]
         line_style = line_style_dict[algo]
-        line_handle, = ax.plot(similarities, [metric_function(m) for m in metrics], marker=marker, linestyle=line_style, color=color, lw=2, label=label, markersize=8)
+        line_handle, = ax.plot(similarities, [metric_function(m) for m in metrics], marker='o', linestyle=line_style, color=color, lw=2, label=label)
         legend_handles.append(line_handle)
 
     fig.legend(
@@ -503,7 +483,7 @@ def main():
         core = Experiment(exps[symm_idx].env, runs)
 
         #transmitted = plot_transmitted(core, colors, marker_dict)
-        transmitted = plot_metric(core, colors, marker_dict, line_style_dict, lambda metric: metric.state + metric.metadata, "Total")
+        transmitted = plot_metric(core, colors, marker_dict, line_style_dict, lambda metric: metric.metadata, "Metadata")
         #transmitted = plot_transmitted_with_surface(core, colors, marker_dict)
         name = f"{Path(file.name).stem}_transmitted.pdf"
         save_or_show(transmitted, name)

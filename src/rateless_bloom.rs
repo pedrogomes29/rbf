@@ -73,8 +73,6 @@ where
         &mut self,
         mut strategy: S,
     ){
-        //eprintln!("BF size: {}", self.data.len());
-
         let mut run = 1;
         loop{
             self.extend();
@@ -97,40 +95,5 @@ where
 
         self.bloom_filters.len() * standalone_bf_size //combined bitarray size in Bytes
         + mem::size_of::<u64>() //size to transmit m the number of bits (in each of the internal BFs)
-    }
-}
-
-fn estimate_intersection(
-    observed_inner_product: f64,
-    n_receiver: i32,
-    n_sender: i32,
-    k: f64,
-    m: f64,
-) -> i32 {
-    let y = 1.0 - 1.0 / m;
-
-    let numerator = observed_inner_product / (k * m) + y.powi(n_receiver) + y.powi(n_sender) - 1.0;
-
-    n_receiver + n_sender - (numerator.ln() / y.ln()).round() as i32
-}
-
-
-fn probability_converged_beta_tail(
-    alpha: f64,
-    beta: f64,
-    desired_intersection: i32,
-    n_receiver: i32,
-    n_sender: i32,
-    m: i32,
-) -> f64 {
-    let y = 1.0 - 1.0 / m as f64;
-
-    let theta_target =
-        1.0 - y.powi(n_sender) - y.powi(n_receiver) + y.powi(n_sender + n_receiver - desired_intersection);
-
-    if let Ok(beta_dist) = Beta::new(alpha, beta) {
-        1.0 - beta_dist.cdf(theta_target)
-    } else {
-        0.0 // fallback: treat as zero confidence if the distribution fails
     }
 }

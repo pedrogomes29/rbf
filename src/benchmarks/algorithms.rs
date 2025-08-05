@@ -1,20 +1,20 @@
 #![allow(dead_code)]
 
 use std::{
-    f64::consts::LN_2, fmt::Display, time::{Duration, Instant}
+    collections::HashSet, f64::consts::LN_2, fmt::Display, hash::Hash, time::{Duration, Instant}
 };
 
 use crate::{
-    benchmarks::{awsets_with, gsets_with, pncounters_with}, crdt::{Decompose, Extract, Measure}, rateless_bloom::{angle_heuristic::AngleHeuristicFactory, bayesian_no_params::{BayesianNoParams, BayesianNoParamsFactory}, bayesian_similarity::BayesianSimilarityFactory, StoppingStrategyFactory}, sync::{
-        baseline::Baseline, bloombuckets::BloomBuckets, bloomribltbuckets::BloomRibltBuckets, bloomriblthashes::BloomRibltHashes, buckets::Buckets, bucketsriblt::RibltBuckets, rbloomriblthashes::RBloomRibltHashes, riblthashes::RibltHashes, Algorithm
+    benchmarks::sets_with, rateless_bloom::{angle_heuristic::AngleHeuristicFactory, bayesian_no_params::{BayesianNoParams, BayesianNoParamsFactory}, bayesian_similarity::BayesianSimilarityFactory, StoppingStrategyFactory}, sync::{
+        bf_riblt::BloomRIBLT, rbf_riblt::RBloomRIBLT, riblt::RIBLT, Algorithm, Measure
     }, tracker::{Bandwidth, DefaultEvent, DefaultTracker, Telemetry}
 };
 
 use rand::{SeedableRng, rngs::StdRng};
 
-const NR_TRIALS:usize = 1;
+const NR_TRIALS:usize = 5;
 
-type Replica<T> = (T, Bandwidth);
+type Replica<T> = (Vec<T>, Bandwidth);
 
 //creates a vector of events corresponding to the average event for each message over multiple experiments
 fn average_tracker_events(
@@ -53,7 +53,7 @@ fn average_tracker_events(
 /// Runs the specified protocol and outputs the metrics obtained.
 fn run<T, A>(algo: &A, similar: f64, local: Replica<T>, remote: Replica<T>) -> DefaultTracker
 where
-    T: Clone + Decompose<Decomposition = T> + Default + Extract + Measure,
+    T: Clone,
     A: Algorithm<T, Tracker = DefaultTracker> + Display,
 {
     assert!(
@@ -61,13 +61,11 @@ where
         "similarity should be a ratio between 0.0 and 1.0"
     );
 
-    //eprintln!("{algo}");
-
-    let (mut local, upload) = local;
-    let (mut remote, download) = remote;
+    let (local, upload) = local;
+    let (remote, download) = remote;
 
     let mut tracker = DefaultTracker::new(download, upload);
-    algo.sync(&mut local, &mut remote, &mut tracker);
+    algo.sync(local, remote, &mut tracker);
 
     let diffs = tracker.false_matches();
     if diffs > 0 {
@@ -77,9 +75,9 @@ where
     tracker
 }
 
-fn run_trial<T,A>(algo: &A, similar: f64, replicas: Vec<(T,T)>, upload:Bandwidth, download:Bandwidth)
+fn run_trial<T,A>(algo: &A, similar: f64, replicas: Vec<(Vec<T>,Vec<T>)>, upload:Bandwidth, download:Bandwidth)
 where
-    T: Clone + Decompose<Decomposition = T> + Default + Extract + Measure,
+    T: Clone,
     A: Algorithm<T, Tracker = DefaultTracker> + Display,
 {
     let nr_experiments = replicas.len();
@@ -119,21 +117,43 @@ where
 
 
 
-fn run_with<T>(similar: f64, replicas: Vec<(T,T)>)
+fn run_with<T>(similar: f64, replicas: Vec<(Vec<T>,Vec<T>)>)
 where
-    T: Clone + Decompose<Decomposition = T> + Default + Extract + Measure,
+    T: Clone + Hash + Measure + Eq,
 {   
 
-    let theoretical_minimum: usize = replicas.iter().map(|(local, remote)|-> usize{
-        let local_only_size = <T as Measure>::size_of(&local.difference(&remote));
-        let remote_only_size = <T as Measure>::size_of(&remote.difference(&local));
-        local_only_size + remote_only_size
-    }).sum::<usize>()/replicas.len();
+    let total_sum_of_differences_size: usize = replicas
+        .iter()
+        .map(|(local_vec, remote_vec)| {
+            let local_set: HashSet<T> = local_vec.iter().cloned().collect();
+            let remote_set: HashSet<T> = remote_vec.iter().cloned().collect();
+
+            // Elements only in local_vec
+            let local_only_size: usize = local_set
+                .difference(&remote_set)
+                .map(|item| T::size_of(&item))
+                .sum();
+
+            // Elements only in remote_vec
+            let remote_only_size: usize = remote_set
+                .difference(&local_set)
+                .map(|item| T::size_of(&item))
+                .sum();
+
+            local_only_size + remote_only_size
+        })
+        .sum();
+
+    let theoretical_minimum: usize = if replicas.is_empty() {
+        0 // Avoid division by zero if replicas is empty
+    } else {
+        total_sum_of_differences_size / replicas.len()
+    };
 
     let links = [
-        (Bandwidth::Mbps(10.0), Bandwidth::Mbps(1.0)),
+        //(Bandwidth::Mbps(10.0), Bandwidth::Mbps(1.0)),
         (Bandwidth::Mbps(10.0), Bandwidth::Mbps(10.0)),
-        (Bandwidth::Mbps(1.0), Bandwidth::Mbps(10.0)),
+        //(Bandwidth::Mbps(1.0), Bandwidth::Mbps(10.0)),
     ];
 
     for (upload, download) in links {
@@ -142,9 +162,8 @@ where
             upload.bits_per_sec(),
             download.bits_per_sec()
         );
-
-        /*
-        let algo = Baseline::new();
+        
+        let algo = RIBLT::new();
         run_trial(
             &algo,
             similar,
@@ -153,86 +172,8 @@ where
             download
         );
 
-        for lf in [0.2, 1.0, 5.0] {
-            let algo = Buckets::new(lf);
-            run_trial(
-                &algo,
-                similar,
-                replicas.clone(),
-                upload,
-                download
-            );
-        }
-
-        for lf in [0.2, 1.0, 5.0] {
-            let algo = RibltBuckets::new(lf);
-            run_trial(
-                &algo,
-                similar,
-                replicas.clone(),
-                upload,
-                download
-            );
-        }
-        */
-
-        
-        let algo = RibltHashes::new();
-        run_trial(
-            &algo,
-            similar,
-            replicas.clone(),
-            upload,
-            download
-        );
-        
-
-
-        /*        
-        for fpr in [0.01, 0.25] {
-            for lf in [1.0, 0.2] {
-                let algo = BloomBuckets::new(fpr, lf);
-                run_trial(
-                    &algo,
-                    similar,
-                    replicas.clone(),
-                    upload,
-                    download
-                );
-            }
-        }
-
-
-        for fpr in [0.01, 0.25] {
-            for lf in [1.0, 0.2] {
-                let algo = BloomRibltBuckets::new(fpr, lf);
-                run_trial(
-                    &algo,
-                    similar,
-                    replicas.clone(),
-                    upload,
-                    download
-                );
-            }
-        }
-
-        
-
-        for fpr in [0.01, 0.1, 0.25]  {
-            let algo = BloomRibltHashes::new(fpr);
-            run_trial(
-                &algo,
-                similar,
-                replicas.clone(),
-                upload,
-                download
-            );
-        }
-        */
-
-        for i in 1..=100 {
-            let fpr = i as f64 * 0.005;
-            let algo = BloomRibltHashes::new(fpr);
+        for fpr in [0.01, 0.1, 0.25] {
+            let algo = BloomRIBLT::new(fpr);
             run_trial(
                 &algo,
                 similar,
@@ -241,43 +182,10 @@ where
                 download,
             );
         }
-      
-        /*
-        for m_ratio in [1.0/LN_2] {
-            for angle_threshold_deg in [0.2, 0.5, 1.0] {
-                let stopping_strategy_factory = AngleHeuristicFactory::new(angle_threshold_deg, 1);
-                let algo = RBloomRibltHashes::new(m_ratio, stopping_strategy_factory);
-                run_trial(
-                    &algo,
-                    similar,
-                    replicas.clone(),
-                    upload,
-                    download
-                );
-            }
-        }
-
-        
-        
-        for m_ratio in [1.0/LN_2] {
-            for target_similarity in [0.97, 0.99, 0.995] {
-                let stopping_strategy_factory = BayesianSimilarityFactory::new(m_ratio, target_similarity);
-                let algo = RBloomRibltHashes::new(m_ratio, stopping_strategy_factory);
-
-                run_trial(
-                    &algo,
-                    similar,
-                    replicas.clone(),
-                    upload,
-                    download
-                );
-            }
-        }
-        */
 
         for m_ratio in [1.0/LN_2] {
             let stopping_strategy_factory = BayesianNoParamsFactory::new(m_ratio);
-            let algo = RBloomRibltHashes::new(m_ratio, stopping_strategy_factory);
+            let algo = RBloomRIBLT::new(m_ratio, stopping_strategy_factory);
 
             run_trial(
                 &algo,
@@ -292,12 +200,12 @@ where
 
 fn run_experiment<T, F>(label: &str, nr_trials: usize, create_replicas: F)
 where
-    T: Clone + Decompose<Decomposition = T> + Default + Extract + Measure,
-    F: Fn(f64) -> (T, T),
+    T: Clone + Hash + Measure + Eq,
+    F: Fn(f64) -> (Vec<T>, Vec<T>),
 {
     let exec_time = Instant::now();
-    let nr_steps = 100;
-    let start_similarity = 0;
+    let nr_steps = 18;
+    let start_similarity = 10;
     let end_similarity = 100;
     let step = ((end_similarity - start_similarity) as f64) / nr_steps as f64;
 
@@ -319,28 +227,9 @@ where
     eprintln!("[{:.2?}] exiting...", exec_time.elapsed());
 }
 
-pub fn run_gset_experiment() {
-    run_experiment("gsets", NR_TRIALS, |s| {
+pub fn run_variable_size_experiment() {
+    run_experiment("variable_size", NR_TRIALS, |s| {
         let mut rng = StdRng::seed_from_u64(rand::random());
-        gsets_with(100_000, s, &mut rng)
-    });
-}
-
-pub fn run_awset_experiment() {
-    // NOTE: AWSets generated with 20% of elements removed. This value is pretty conservative for
-    // the particular study scenario of 15% of deleted or removed posts as in mainstream social
-    // media [1].
-    //
-    // [1]: https://www.researchgate.net/publication/367503309_Engagement_with_fact-checked_posts_on_Reddit
-    run_experiment("awsets", NR_TRIALS, |s| {
-        let mut rng = StdRng::seed_from_u64(rand::random());
-        awsets_with(20_000, s, 0.2, &mut rng)
-    });
-}
-
-pub fn run_pncounter_experiment() {
-    run_experiment("pncounters", NR_TRIALS, |s| {
-        let mut rng = StdRng::seed_from_u64(rand::random());
-        pncounters_with(100_000, s, &mut rng)
+        sets_with(100_000, s, &mut rng)
     });
 }

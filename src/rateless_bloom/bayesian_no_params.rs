@@ -1,4 +1,4 @@
-use std::{cmp::{max, min}, hash::Hash};
+use std::{cmp::{max, min}, collections::HashSet, hash::Hash};
 
 use crate::bayesian_estimation;
 
@@ -22,18 +22,20 @@ const RATELESS_SET_RECONCILIATION_OVERHEAD: usize =
 
 pub struct BayesianNoParams<T: Hash> {
     receiver_bf: RatelessBF<T>,
+    original_set_size: usize,
     alpha: usize,
     beta: usize,
 }
 
 impl<T: Hash> BayesianNoParams<T> {
-    pub fn new(receiver_data: Vec<T>, m_ratio: f64) -> Self {
+    pub fn new(receiver_data: Vec<T>, m_ratio: f64, original_set_size: usize) -> Self {
         let m = (receiver_data.len() as f64 * m_ratio).ceil() as usize;
         let receiver_bf = RatelessBF::new(receiver_data, m);
         Self {
             alpha: 1,
             beta: 1,
             receiver_bf,
+            original_set_size
         }
     }
 }
@@ -50,15 +52,20 @@ impl BayesianNoParamsFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategyFactory<T> for BayesianNoParamsFactory {
+impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianNoParamsFactory {
     type Strategy = BayesianNoParams<T>;
 
     fn create(&self, elements: Vec<T>, sample_size:usize) -> Self::Strategy {
+        let original_set_size = elements.len();
+        //assumes elements are sorted randomly so first sample_size elements are a random sample
+        //if this is not the case, you should actually take a random sample
         let elements = elements.into_iter().take(sample_size).collect::<Vec<_>>();
+
 
         BayesianNoParams::new(
             elements,
             self.m_ratio,
+            original_set_size
         )
     }
 
@@ -71,7 +78,7 @@ impl<T: Hash> StoppingStrategyFactory<T> for BayesianNoParamsFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategy<T> for BayesianNoParams<T> {
+impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
     fn on_extend(&mut self, sender_bf: &RatelessBF<T>) {
         let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf.extend_with_hashers(last_sender_slice.hashers());
@@ -97,31 +104,40 @@ impl<T: Hash> StoppingStrategy<T> for BayesianNoParams<T> {
         let m = sender_bf.m;
         let m_bytes = m/8;
         let fpr = 1.0 - (1.0 - 1.0/m as f64).powi(n_sender);
-        let desired_new_negatives = m_bytes/RATELESS_SET_RECONCILIATION_OVERHEAD;
-        let desired_false_positives = (desired_new_negatives as f64/(1.0-fpr)).round() as i32;
+        let sample_size = self.receiver_bf.data.len();
+
+
+
+        let sample_size_offset = self.original_set_size as f64 / sample_size as f64;
+        let sample_size_offset = 1.0;
+
+        let desired_new_negatives =
+            m_bytes as f64/(RATELESS_SET_RECONCILIATION_OVERHEAD as f64/sample_size_offset);
+
+
+        let desired_false_positives = 
+            (
+                desired_new_negatives
+                /
+                (1.0-fpr)
+            ).round() as i32;
+        
+
+
+
+
         let desired_intersection = n_sender - true_negatives - desired_false_positives;
 
-        const SMALL_FILTER_MAX_SIZE: i32 = 2500;
-
-        let confidence = if n_sender<SMALL_FILTER_MAX_SIZE{
+        let confidence = {
             let n_receiver = self.receiver_bf.data.len();
             bayesian_estimation::numeric_posterior_tail(
                 self.alpha, 
                 self.alpha + self.beta, 
-                sender_bf.data.len(),
-                self.receiver_bf.data.len(),
+                n_sender.try_into().unwrap(),
+                n_receiver,
                 m,
                 max(desired_intersection,0) as usize,
                 min(n_sender as usize,n_receiver))
-        }else{
-            bayesian_estimation::probability_converged_beta_tail(
-                self.alpha as f64,
-                self.beta as f64,
-                desired_intersection,
-                self.receiver_bf.data.len() as i32,
-                sender_bf.data.len() as i32,
-                m as i32
-            )
         };
 
         confidence > CONFIDENCE_LEVEL

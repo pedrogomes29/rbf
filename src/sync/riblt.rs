@@ -1,20 +1,18 @@
-use std::{collections::HashMap, fmt::Display, hash::RandomState, marker::PhantomData, mem};
+use std::{collections::{HashMap, HashSet}, fmt::Display, hash::RandomState, marker::PhantomData, mem};
 
 use crate::{
-    crdt::{Decompose, Extract, Measure},
-    riblt::{RatelessIBLT, Symbol},
-    tracker::{DefaultEvent, DefaultTracker, Telemetry},
+    riblt::{RatelessIBLT, Symbol}, sync::Measure, tracker::{DefaultEvent, DefaultTracker, Telemetry}
 };
 
-use std::hash::BuildHasher;
+use std::hash::{Hash, BuildHasher};
 
 use super::{Algorithm, BuildRatelessIBLT};
 
-pub struct RibltHashes<T> {
+pub struct RIBLT<T> {
     _marker: PhantomData<T>,
 }
 
-impl<T> RibltHashes<T> {
+impl<T> RIBLT<T> {
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -24,21 +22,21 @@ impl<T> RibltHashes<T> {
     }
 }
 
-impl<T> Display for RibltHashes<T> {
+impl<T> Display for RIBLT<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Rateless")
     }
 }
 
-impl<T> BuildRatelessIBLT<T> for RibltHashes<T> where T: Symbol {}
+impl<T> BuildRatelessIBLT<T> for RIBLT<T> where T: Symbol {}
 
-impl<T> Algorithm<T> for RibltHashes<T>
+impl<T> Algorithm<T> for RIBLT<T>
 where
-    T: Clone + Extract + Decompose<Decomposition = T> + Measure,
+    T: Clone + Hash + Measure + Eq,
 {
     type Tracker = DefaultTracker;
 
-    fn sync(&self, local: &mut T, remote: &mut T, tracker: &mut Self::Tracker) {
+    fn sync(&self, mut local: Vec<T>, mut remote: Vec<T>, tracker: &mut Self::Tracker) {
         const CODED_SYMBOL_SIZE: usize =
             mem::size_of::<u64>() + mem::size_of::<u64>() + mem::size_of::<i64>();
 
@@ -52,22 +50,18 @@ where
         let hasher = RandomState::new();
         let mut local_hashes = HashMap::new();
 
-        local.split().into_iter().for_each(|d| {
-            let item = d.extract();
-            let item_hash = hasher.hash_one(item);
-
-            local_hashes.insert(item_hash, d);
+        local.iter().cloned().for_each(|e| {
+            let item_hash = hasher.hash_one(&e);
+            local_hashes.insert(item_hash, e);
         });
         let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
 
         // 2. Repeat the procedure from 1., but now on the remote replica.
         let mut remote_hashes = HashMap::new();
 
-        remote.split().into_iter().for_each(|d| {
-            let item = d.extract();
-            let item_hash = hasher.hash_one(item);
-
-            remote_hashes.insert(item_hash, d);
+        remote.iter().cloned().for_each(|e| {
+            let item_hash = hasher.hash_one(&e);
+            remote_hashes.insert(item_hash, e);
         });
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
 
@@ -85,7 +79,7 @@ where
         let remote_only_hashes = remote_iblt.get_local_only_symbols();
         let local_only_hashes = remote_iblt.get_remote_only_symbols();
 
-        let remote_only_decompositions: Vec<_> = remote_only_hashes
+        let remote_only_elements: Vec<_> = remote_only_hashes
             .into_iter()
             .map(|hash| remote_hashes[&hash].clone())
             .collect();
@@ -93,7 +87,7 @@ where
         // 4. Send remote only state corresponding to remote only hashes,
         //    Send local only hashes to request for local only state
         tracker.register(DefaultEvent::RemoteToLocal {
-            state: remote_only_decompositions
+            state: remote_only_elements
                 .iter()
                 .map(<T as Measure>::size_of)
                 .sum(),
@@ -101,14 +95,14 @@ where
             download: tracker.download(),
         });
 
-        let local_only_decompositions: Vec<_> = local_only_hashes
+        let local_only_elements: Vec<_> = local_only_hashes
             .into_iter()
             .map(|hash| local_hashes[&hash].clone())
             .collect();
 
         // 5. Send local only state corresponding to local only hashes,
         tracker.register(DefaultEvent::LocalToRemote {
-            state: local_only_decompositions
+            state: local_only_elements
                 .iter()
                 .map(<T as Measure>::size_of)
                 .sum(),
@@ -116,53 +110,65 @@ where
             upload: tracker.upload(),
         });
 
-        // 5. Join the appropriate join-decompositions to each replica.
-        local.join(remote_only_decompositions);
-        remote.join(local_only_decompositions);
 
-        // 6. Sanity check.
-        tracker.finish(<T as Measure>::false_matches(local, remote));
+        // 9. Sanity Check
+        local.extend(remote_only_elements);
+        remote.extend(local_only_elements);
+
+
+        let local_set: HashSet<T> = local.into_iter().collect();
+        let remote_set: HashSet<T> = remote.into_iter().collect();
+
+        // Elements only in local_vec
+        let local_only = local_set
+            .difference(&remote_set);
+
+        // Elements only in remote_vec
+        let remote_only = remote_set
+            .difference(&local_set);
+
+        let false_matches = local_only.count() + remote_only.count();
+        tracker.finish(false_matches);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{crdt::GSet, tracker::Bandwidth};
+    use crate::tracker::Bandwidth;
 
     #[test]
     fn test_sync() {
-        let mut local = {
-            let mut gset = GSet::new();
-            let items = "Stuck In A Moment You Can't Get Out Of"
+        let local = {
+            let mut local = Vec::new();
+            let items = "a b c d e f g h i j k l"
                 .split_whitespace()
                 .collect::<Vec<_>>();
 
             for item in items {
-                gset.insert(item.to_string());
+                local.push(item.to_string());
             }
 
-            gset
+            local
         };
 
-        let mut remote = {
-            let mut gset = GSet::new();
-            let items = "I Still Haven't Found What I'm Looking For"
+        let remote = {
+            let mut remote = Vec::new();
+            let items = "m n o p q r s t u v w x y z"
                 .split_whitespace()
                 .collect::<Vec<_>>();
 
             for item in items {
-                gset.insert(item.to_string());
+                remote.push(item.to_string());
             }
 
-            gset
+            remote
         };
-
         let (download, upload) = (Bandwidth::Kbps(0.5), Bandwidth::Kbps(0.5));
         let mut tracker = DefaultTracker::new(download, upload);
-        let buckets = RibltHashes::new();
+        let buckets = RIBLT::new();
 
-        buckets.sync(&mut local, &mut remote, &mut tracker);
+        buckets.sync(local, remote, &mut tracker);
 
         assert_eq!(tracker.false_matches(), 0);
     }

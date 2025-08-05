@@ -44,6 +44,8 @@ impl<T: Hash> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
     type Strategy = BayesianSimilarity<T>;
 
     fn create(&self, elements: Vec<T>, sample_size:usize) -> Self::Strategy {
+        //assumes elements are sorted randomly so first sample_size elements are a random sample
+        //if this is not the case, you should actually take a random sample
         let elements = elements.into_iter().take(sample_size).collect::<Vec<_>>();
 
         BayesianSimilarity::new(
