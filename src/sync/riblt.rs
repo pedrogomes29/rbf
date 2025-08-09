@@ -1,7 +1,7 @@
-use std::{collections::{HashMap, HashSet}, fmt::Display, hash::RandomState, marker::PhantomData, mem};
+use std::{collections::{HashMap, HashSet}, fmt::Display, hash::RandomState, marker::PhantomData, mem, time::Instant};
 
 use crate::{
-    riblt::{RatelessIBLT, Symbol}, sync::Measure, tracker::{DefaultEvent, DefaultTracker, Telemetry}
+    riblt::{RatelessIBLT, Symbol}, sync::Measure, tracker::{DefaultTracker, Telemetry}
 };
 
 use std::hash::{Hash, BuildHasher};
@@ -50,19 +50,28 @@ where
         let hasher = RandomState::new();
         let mut local_hashes = HashMap::new();
 
+        let exec_time = Instant::now();
         local.iter().cloned().for_each(|e| {
             let item_hash = hasher.hash_one(&e);
             local_hashes.insert(item_hash, e);
         });
+        let t_enc_local_elements_to_hashes = exec_time.elapsed();
+
+
+
         let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
 
         // 2. Repeat the procedure from 1., but now on the remote replica.
         let mut remote_hashes = HashMap::new();
 
+        let exec_time = Instant::now();
         remote.iter().cloned().for_each(|e| {
             let item_hash = hasher.hash_one(&e);
             remote_hashes.insert(item_hash, e);
         });
+        let t_enc_remote_elements_to_hashes = exec_time.elapsed();
+
+
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
 
         // 3. Send Coded symbols until the remote replica has enough to decode all the differences
@@ -70,46 +79,57 @@ where
         let sketch_size = local_iblt.sketch.len();
         assert_eq!(sketch_size, remote_iblt.sketch.len());
 
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: 0,
-            metadata: sketch_size * CODED_SYMBOL_SIZE,
-            upload: tracker.upload(),
-        });
+        tracker.increment_metadata(sketch_size * CODED_SYMBOL_SIZE);
 
         let remote_only_hashes = remote_iblt.get_local_only_symbols();
         let local_only_hashes = remote_iblt.get_remote_only_symbols();
 
+        let exec_time = Instant::now();
         let remote_only_elements: Vec<_> = remote_only_hashes
             .into_iter()
             .map(|hash| remote_hashes[&hash].clone())
             .collect();
+        let t_dec_remote_hashes_to_elem = exec_time.elapsed();
+
+
 
         // 4. Send remote only state corresponding to remote only hashes,
         //    Send local only hashes to request for local only state
-        tracker.register(DefaultEvent::RemoteToLocal {
-            state: remote_only_elements
+        tracker.increment_state(
+            remote_only_elements
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum(),
-            metadata: local_only_hashes.iter().count() * mem::size_of::<u64>(),
-            download: tracker.download(),
-        });
+                .sum()
+        );
+        tracker.increment_metadata(local_only_hashes.iter().count() * mem::size_of::<u64>());
 
+        let exec_time = Instant::now();
         let local_only_elements: Vec<_> = local_only_hashes
             .into_iter()
             .map(|hash| local_hashes[&hash].clone())
             .collect();
+        let t_dec_local_hashes_to_elem = exec_time.elapsed();
+
 
         // 5. Send local only state corresponding to local only hashes,
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: local_only_elements
+        tracker.increment_state(
+            local_only_elements
                 .iter()
                 .map(<T as Measure>::size_of)
                 .sum(),
-            metadata: 0,
-            upload: tracker.upload(),
-        });
+        );
 
+        tracker.increment_t_enc(
+            remote_iblt.t_enc()
+            + t_enc_local_elements_to_hashes
+            + t_enc_remote_elements_to_hashes
+        );
+
+        tracker.increment_t_dec(
+            remote_iblt.t_dec()
+            + t_dec_local_hashes_to_elem
+            + t_dec_remote_hashes_to_elem
+        );
 
         // 9. Sanity Check
         local.extend(remote_only_elements);
@@ -135,7 +155,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tracker::Bandwidth;
 
     #[test]
     fn test_sync() {
@@ -164,8 +183,7 @@ mod tests {
 
             remote
         };
-        let (download, upload) = (Bandwidth::Kbps(0.5), Bandwidth::Kbps(0.5));
-        let mut tracker = DefaultTracker::new(download, upload);
+        let mut tracker = DefaultTracker::new();
         let buckets = RIBLT::new();
 
         buckets.sync(local, remote, &mut tracker);

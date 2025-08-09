@@ -79,7 +79,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianNoParamsFactor
 }
 
 impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
-    fn on_extend(&mut self, sender_bf: &RatelessBF<T>) {
+    fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
         let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf.extend_with_hashers(last_sender_slice.hashers());
 
@@ -92,7 +92,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
         self.beta += sender_bf.m - and_ones;
     }
 
-    fn should_stop(&mut self, sender_bf: &RatelessBF<T>) -> bool {
+    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
         let true_negatives = self
             .receiver_bf
             .data
@@ -108,7 +108,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
 
 
 
-        let sample_size_offset = self.original_set_size as f64 / sample_size as f64;
+        let _sample_size_offset = self.original_set_size as f64 / sample_size as f64;
         let sample_size_offset = 1.0;
 
         let desired_new_negatives =
@@ -121,10 +121,6 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
                 /
                 (1.0-fpr)
             ).round() as i32;
-        
-
-
-
 
         let desired_intersection = n_sender - true_negatives - desired_false_positives;
 

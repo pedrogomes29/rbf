@@ -1,8 +1,7 @@
 use super::bloom::BloomFilter;
 use std::{
-    cmp::max, error::Error, fmt::{self, Display, Formatter}, hash::{Hash, RandomState}, mem
+    cmp::max, error::Error, fmt::{self, Display, Formatter}, hash::{Hash, RandomState}, mem, time::{Duration, Instant}
 };
-use statrs::distribution::{Beta, ContinuousCDF};
 
 pub mod angle_heuristic;
 pub mod bayesian_similarity;
@@ -16,8 +15,8 @@ pub trait StoppingStrategyFactory<T: Hash> {
 }
 
 pub trait StoppingStrategy<T: Hash> {
-    fn on_extend(&mut self, bf: &RatelessBF<T>);
-    fn should_stop(&mut self, bf: &RatelessBF<T>) -> bool;
+    fn on_extend(&mut self, bf: &mut RatelessBF<T>);
+    fn should_stop(&mut self, bf: &mut RatelessBF<T>) -> bool;
 }
 
 #[derive(Debug)]
@@ -35,6 +34,8 @@ pub struct RatelessBF<T: Hash> {
     bloom_filters: Vec<BloomFilter<T>>,
     data: Vec<T>,
     m: usize,
+    t_enc: Duration,
+    t_dec: Duration
 }
 
 impl<T> RatelessBF<T>
@@ -48,6 +49,8 @@ where
             bloom_filters: Vec::new(),
             data,
             m: max(m,1),
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0)
         }
     }
 
@@ -69,20 +72,33 @@ where
             .all(|filter| filter.contains(value))
     }
 
+    //TODO: extend until returns positives and negatives
     pub fn extend_until<S: StoppingStrategy<T>>(
         &mut self,
         mut strategy: S,
     ){
-        let mut run = 1;
+        let mut _run = 1;
         loop{
+            let exec_time = Instant::now();
             self.extend();
+            self.t_enc += exec_time.elapsed();
+            let exec_time = Instant::now();
             strategy.on_extend(self);
             if strategy.should_stop(self) {
+                self.t_dec += exec_time.elapsed();
                 //eprintln!("Coverged after {run} runs");
                 return;
             }
-            run+=1;
+            self.t_dec += exec_time.elapsed();
+            _run+=1;
         }
+    }
+
+    pub fn on_extend<S: StoppingStrategy<T>>(
+        &mut self,
+        mut strategy: S,
+    ){
+        strategy.on_extend(self);
     }
 
     pub fn size_of(&self) -> usize {
@@ -95,5 +111,15 @@ where
 
         self.bloom_filters.len() * standalone_bf_size //combined bitarray size in Bytes
         + mem::size_of::<u64>() //size to transmit m the number of bits (in each of the internal BFs)
+    }
+
+    #[inline]
+    pub fn t_enc(&self) -> Duration {
+        self.t_enc
+    }
+
+    #[inline]
+    pub fn t_dec(&self) -> Duration {
+        self.t_dec
     }
 }

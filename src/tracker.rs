@@ -1,157 +1,75 @@
 use std::time::Duration;
 
 pub trait Telemetry {
-    type Event;
-
     fn is_ready(&self) -> bool;
-    fn register(&mut self, event: Self::Event);
-    fn events(&self) -> &Vec<Self::Event>;
+    fn state(&self) -> usize;
+    fn metadata(&self) -> usize;
+    fn bytes(&self) -> usize;
+    fn t_enc(&self) -> Duration;
+    fn t_dec(&self) -> Duration;
+    fn increment_state(&mut self, additional_state:usize);
+    fn increment_metadata(&mut self, additional_metadata:usize);
+    fn increment_t_enc(&mut self, additional_t_enc: Duration);
+    fn increment_t_dec(&mut self, additional_t_dec: Duration);
     fn finish(&mut self, false_matches: usize);
     fn false_matches(&self) -> usize;
 }
 
-/// Network Bandwidth value in bits per second.
-#[derive(Clone, Copy, Debug)]
-pub enum Bandwidth {
-    Kbps(f64),
-    Mbps(f64),
-    Gbps(f64),
-}
-
-impl Bandwidth {
-    pub fn bits_per_sec(&self) -> f64 {
-        match self {
-            Bandwidth::Kbps(b) => b * 1.0e3,
-            Bandwidth::Mbps(b) => b * 1.0e6,
-            Bandwidth::Gbps(b) => b * 1.0e9,
-        }
-    }
-
-    pub fn bytes_per_sec(&self) -> f64 {
-        self.bits_per_sec() / 8.0
-    }
-}
-
-/// Type of Event used by the [`DefaultTracker`].
-/// It holds the size of the transfered payload in Bytes and estimates the duration based on the
-/// bandwidth provided by the tracker that registers these kind of events.
-#[derive(Debug,Clone)]
-pub enum DefaultEvent {
-    LocalToRemote {
-        state: usize,
-        metadata: usize,
-        upload: Bandwidth,
-    },
-    RemoteToLocal {
-        state: usize,
-        metadata: usize,
-        download: Bandwidth,
-    },
-}
-
-impl DefaultEvent {
-    #[inline]
-    pub const fn state(&self) -> usize {
-        match &self {
-            Self::LocalToRemote { state, .. } => *state,
-            Self::RemoteToLocal { state, .. } => *state,
-        }
-    }
-
-    #[inline]
-    pub const fn metadata(&self) -> usize {
-        match &self {
-            Self::LocalToRemote { metadata, .. } => *metadata,
-            Self::RemoteToLocal { metadata, .. } => *metadata,
-        }
-    }
-
-    #[inline]
-    pub const fn bytes(&self) -> usize {
-        self.state() + self.metadata()
-    }
-
-    #[inline]
-    pub const fn upload(&self) -> Bandwidth {
-        match &self {
-            Self::LocalToRemote { upload, .. } => *upload,
-            _ => unreachable!(),
-        }
-    }
-
-    #[inline]
-    pub const fn download(&self) -> Bandwidth {
-        match &self {
-            Self::RemoteToLocal { download, .. } => *download,
-            _ => unreachable!(),
-        }
-    }
-
-    #[inline]
-    pub fn duration(&self) -> Result<Duration, Duration> {
-        let bandwidth = match &self {
-            Self::LocalToRemote { upload, .. } => *upload,
-            Self::RemoteToLocal { download, .. } => *download,
-        }
-        .bytes_per_sec();
-
-        if bandwidth > 0.0 {
-            Ok(Duration::from_secs_f64(self.bytes() as f64 / bandwidth))
-        } else {
-            Err(Duration::ZERO)
-        }
-    }
-}
-
-/// Default [`Tracker`] for operations over the Network.
 #[derive(Debug)]
 pub struct DefaultTracker {
-    events: Vec<DefaultEvent>,
-    diffs: Option<usize>,
-    download: Bandwidth,
-    upload: Bandwidth,
+    state: usize,
+    metadata: usize,
+    t_enc: Duration,
+    t_dec: Duration,
+    diffs: Option<usize>
 }
 
 impl DefaultTracker {
     #[inline]
     #[must_use]
-    pub fn new(download: Bandwidth, upload: Bandwidth) -> Self {
+    pub fn new() -> Self {
         Self {
-            events: vec![],
+            state: 0,
+            metadata: 0,
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0),
             diffs: None,
-            download,
-            upload,
         }
-    }
-}
-
-impl DefaultTracker {
-    #[inline]
-    pub const fn download(&self) -> Bandwidth {
-        self.download
-    }
-
-    #[inline]
-    pub const fn upload(&self) -> Bandwidth {
-        self.upload
     }
 }
 
 impl Telemetry for DefaultTracker {
-    type Event = DefaultEvent;
-
     fn is_ready(&self) -> bool {
-        self.events.is_empty() && self.diffs.is_none()
+        self.diffs.is_none()
     }
 
-    fn register(&mut self, event: Self::Event) {
-        if self.diffs.is_none() {
-            self.events.push(event);
-        }
+    fn state(&self) -> usize {
+        self.state
+    }
+    fn metadata(&self) -> usize {
+        self.metadata
+    }
+    fn bytes(&self) -> usize {
+        self.metadata + self.state
+    }
+    fn t_enc(&self) -> Duration {
+        self.t_enc
+    }
+    fn t_dec(&self) -> Duration {
+        self.t_dec
     }
 
-    fn events(&self) -> &Vec<Self::Event> {
-        &self.events
+    fn increment_state(&mut self, additional_state:usize){
+        self.state += additional_state
+    }
+    fn increment_metadata(&mut self, additional_metadata:usize){
+        self.metadata += additional_metadata
+    }
+    fn increment_t_enc(&mut self, additional_t_enc: Duration) {
+        self.t_enc += additional_t_enc
+    }
+    fn increment_t_dec(&mut self, additional_t_dec: Duration) {
+        self.t_dec += additional_t_dec
     }
 
     fn finish(&mut self, diffs: usize) {

@@ -3,10 +3,10 @@ use std::{
     fmt::Display,
     hash::{BuildHasher, Hash, RandomState},
     marker::PhantomData,
-    mem,
+    mem, time::Instant,
 };
 
-use crate::{rateless_bloom::StoppingStrategyFactory, riblt::RatelessIBLT, sync::Measure, tracker::{DefaultEvent, DefaultTracker, Telemetry}};
+use crate::{rateless_bloom::StoppingStrategyFactory, riblt::RatelessIBLT, sync::Measure, tracker::{DefaultTracker, Telemetry}};
 
 use super::{Algorithm, BuildRatelessFilter};
 
@@ -69,11 +69,8 @@ where
         let stopping_strategy = self.stopping_strategy_factory.create(remote.clone(), local.len());
         local_filter.extend_until(stopping_strategy);
         
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: 0,
-            metadata: local_filter.size_of(),
-            upload: tracker.upload(),
-        });
+
+        tracker.increment_metadata(local_filter.size_of());
 
         // 2. Partion the remote join-decompositions into *probably* present in both replicas or
         //    *definitely not* present in the local replica.
@@ -90,16 +87,15 @@ where
 
         // 4. Partion the local join-decompositions into *probably* present in both replicas or
         //    *definitely not* present in the remote replica. (same as 2)
-        tracker.register(DefaultEvent::RemoteToLocal {
-            state: local_unknown.iter().map(<T as Measure>::size_of).sum(),
-            metadata: remote_filter.size_of(),
-            download: tracker.download(),
-        });
+        tracker.increment_state(local_unknown.iter().map(<T as Measure>::size_of).sum());
+        tracker.increment_metadata( remote_filter.size_of());
 
         let (local_common, remote_unknown) = self.partition(&remote_filter, local.clone());
 
         // 5. Calculate the hashes of the *probably* common join-decompositions and put them into the sketch
         //    to be streamed for synchronization
+
+        let exec_time = Instant::now();
         let local_hashes = {
             let mut local_hashes = HashMap::new();
             local_common.into_iter().for_each(|elem| {
@@ -108,10 +104,14 @@ where
             });
             local_hashes
         };
+        let t_enc_local_elements_to_hashes = exec_time.elapsed();
+
+
         let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
 
         // 6. Calculate the hashes of the *probably* common join-decompositions and put them into the sketch
         //    to be streamed for synchronization (same as 4)
+        let exec_time = Instant::now();
         let remote_hashes = {
             let mut remote_hashes = HashMap::new();
             remote_common.into_iter().for_each(|elem| {
@@ -120,6 +120,8 @@ where
             });
             remote_hashes
         };
+        let t_enc_remote_elements_to_hashes = exec_time.elapsed();
+
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
         remote_iblt.find_all_differences(&mut local_iblt);
 
@@ -127,46 +129,60 @@ where
         assert_eq!(sketch_size, local_iblt.sketch.len());
 
         //message with just received sketch
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: remote_unknown.iter().map(<T as Measure>::size_of).sum(),
-            metadata: sketch_size * CODED_SYMBOL_SIZE,
-            upload: tracker.upload(),
-        });
+        tracker.increment_state(remote_unknown.iter().map(<T as Measure>::size_of).sum());
+        tracker.increment_metadata( sketch_size * CODED_SYMBOL_SIZE);
 
         let remote_only_hashes_fp = remote_iblt.get_local_only_symbols();
         let local_only_hashes_fp = remote_iblt.get_remote_only_symbols();
 
+        let exec_time = Instant::now();
         let remote_only_elements_fp: Vec<_> = remote_only_hashes_fp
             .into_iter()
             .map(|hash| remote_hashes[&hash].clone())
             .collect();
+        let t_dec_remote_hashes_to_elem = exec_time.elapsed();
 
         // 7. Send remote unknown state detected using the BF
         //    Send local only state due to false positives
         //    Send remote only hashes to request for remote only state due to false positives
-        tracker.register(DefaultEvent::RemoteToLocal {
-            state: remote_only_elements_fp
+        tracker.increment_state(
+            remote_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum(),
-            metadata: local_only_hashes_fp.len() * mem::size_of::<u64>(),
-            download: tracker.download(),
-        });
+                .sum()
+        );
+        tracker.increment_metadata(local_only_hashes_fp.len() * mem::size_of::<u64>());
 
+        let exec_time = Instant::now();
         let local_only_elements_fp: Vec<_> = local_only_hashes_fp
             .into_iter()
             .map(|hash| local_hashes[&hash].clone())
             .collect();
+        let t_dec_local_hashes_to_elem = exec_time.elapsed();
 
         // 8. Send remote only state due to false positives
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: local_only_elements_fp
+        tracker.increment_state(
+local_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum(),
-            metadata: 0,
-            upload: tracker.upload(),
-        });
+                .sum()
+        );
+
+        tracker.increment_t_enc(
+            local_filter.t_enc()
+                        + remote_filter.t_enc()
+                        + remote_iblt.t_enc()
+                        + t_enc_local_elements_to_hashes
+                        + t_enc_remote_elements_to_hashes
+        );
+
+        tracker.increment_t_dec(
+            local_filter.t_dec()
+                        + remote_filter.t_dec()
+                        + remote_iblt.t_dec()
+                        + t_dec_local_hashes_to_elem
+                        + t_dec_remote_hashes_to_elem
+        );
 
         // 9. Sanity Check
         remote.extend( remote_unknown);
@@ -195,7 +211,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{rateless_bloom::angle_heuristic::AngleHeuristicFactory, tracker::Bandwidth};
+    use crate::{rateless_bloom::angle_heuristic::AngleHeuristicFactory};
 
     #[test]
     fn test_sync() {
@@ -225,15 +241,11 @@ mod tests {
             remote
         };
 
-        let (download, upload) = (Bandwidth::Kbps(0.5), Bandwidth::Kbps(0.5));
-        let mut tracker = DefaultTracker::new(download, upload);
+        let mut tracker = DefaultTracker::new();
         let stopping_strategy_factory = AngleHeuristicFactory::new(1.0, 1);
         let bloom_buckets = RBloomRIBLT::new(0.5, stopping_strategy_factory);
 
         bloom_buckets.sync(local, remote, &mut tracker);
         assert_eq!(tracker.false_matches(), 0);
-
-        let events = tracker.events();
-        assert_eq!(events.len(), 5);
     }
 }

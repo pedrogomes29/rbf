@@ -52,7 +52,7 @@ impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
 }
 
 impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
-    fn on_extend(&mut self, bf: &RatelessBF<T>) {
+    fn on_extend(&mut self, bf: &mut RatelessBF<T>) {
         let (positives, negatives): (Vec<_>, Vec<_>) = self
             .elements
             .drain(..)
@@ -74,7 +74,7 @@ impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
         self.elements = positives.into_iter().chain(negatives).collect();
     }
 
-    fn should_stop(&mut self, _: &RatelessBF<T>) -> bool {
+    fn should_stop(&mut self, _: &mut RatelessBF<T>) -> bool {
         if self.recent_angles.len() == self.window_size {
             let avg: f64 = self.recent_angles.iter().sum::<f64>() / self.window_size as f64;
             return avg < self.angle_threshold_deg

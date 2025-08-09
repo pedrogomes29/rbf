@@ -36,19 +36,19 @@ pub trait BuildFilter<T: Hash>
         let mut filter = BloomFilter::new(decompositions.len(), fpr);
         decompositions
             .iter()
-            .for_each(|e| filter.insert(e));
+            .for_each(|e| filter.timed_insert(e));
 
         filter
     }
 
     fn partition(
         &self,
-        filter: &BloomFilter<T>,
+        filter: &mut BloomFilter<T>,
         elements: Vec<T>,
     ) -> (Vec<T>, Vec<T>) {
         elements
             .into_iter()
-            .partition(|e| filter.contains(e))
+            .partition(|e| filter.timed_contains(e))
     }
 
     fn size_of(filter: &BloomFilter<T>) -> usize {

@@ -65,7 +65,7 @@ impl<T: Hash> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
 }
 
 impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
-    fn on_extend(&mut self, sender_bf: &RatelessBF<T>) {
+    fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
         let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf.extend_with_hashers(last_sender_slice.hashers());
 
@@ -78,7 +78,7 @@ impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
         self.beta += sender_bf.m - and_ones;
     }
 
-    fn should_stop(&mut self, sender_bf: &RatelessBF<T>) -> bool {
+    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
         let true_negatives = self
             .receiver_bf
             .data

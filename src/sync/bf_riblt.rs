@@ -3,13 +3,14 @@ use std::{
     fmt::Display,
     hash::{BuildHasher, Hash, RandomState},
     marker::PhantomData,
-    mem,
+    mem, time::Instant,
 };
 
 use crate::{
-    riblt::RatelessIBLT, sync::Measure, tracker::{DefaultEvent, DefaultTracker, Telemetry}
+    riblt::RatelessIBLT, sync::Measure, tracker::{DefaultTracker, Telemetry}
 };
 
+use std::time::Duration;
 use super::{Algorithm, BuildFilter};
 
 #[derive(Clone, Copy, Debug)]
@@ -68,23 +69,20 @@ where
         let hasher = RandomState::new();
 
         // 1. Create a bloom filter from the local elements and send it to the remote replica.
-        let local_filter = self.filter_from(&local, self.fpr);
-
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: 0,
-            metadata: <Self as BuildFilter<T>>::size_of(&local_filter),
-            upload: tracker.upload(),
-        });
+        let mut local_filter = self.filter_from(&local, self.fpr);
+        tracker.increment_metadata( <Self as BuildFilter<T>>::size_of(&local_filter));
 
         // 2. Partion the remote elements into *probably* present in both replicas or
         //    *definitely not* present in the local replica.
-        let (remote_common, local_unknown) = self.partition(&local_filter, remote.clone());
+        let (remote_common, local_unknown) = self.partition(&mut local_filter, remote.clone());
+
 
         // 3. Build a bloom filter from the partion of *probably* common elements
-        let remote_filter = self.filter_from(&remote_common, self.fpr);
+        let mut remote_filter = self.filter_from(&remote_common, self.fpr);
 
         // 4. Calculate the hashes of the *probably* common elements and put them into the sketch
         //    to be streamed for synchronization
+        let exec_time = Instant::now();
         let remote_hashes = {
             let mut remote_hashes = HashMap::new();
             remote_common.into_iter().for_each(|elem| {
@@ -93,14 +91,18 @@ where
             });
             remote_hashes
         };
+        let t_enc_remote_elements_to_hashes = exec_time.elapsed();
+
+
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
 
         // 5. Partion the local elements into *probably* present in both replicas or
         //    *definitely not* present in the remote replica. (same as 2)
-        let (local_common, remote_unknown) = self.partition(&remote_filter, local.clone());
+        let (local_common, remote_unknown) = self.partition(&mut remote_filter, local.clone());
 
         // 6. Calculate the hashes of the *probably* common elements and put them into the sketch
         //    to be streamed for synchronization (same as 4)
+        let exec_time = Instant::now();
         let local_hashes = {
             let mut local_hashes = HashMap::new();
             local_common.into_iter().for_each(|elem| {
@@ -109,58 +111,78 @@ where
             });
             local_hashes
         };
-        let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
+        let t_enc_local_elements_to_hashes = exec_time.elapsed();
 
+
+        let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
         local_iblt.find_all_differences(&mut remote_iblt);
+
+
 
         let sketch_size = local_iblt.sketch.len();
         assert_eq!(sketch_size, remote_iblt.sketch.len());
 
-        //message with just received filter + sketch
-        tracker.register(DefaultEvent::RemoteToLocal {
-            state: local_unknown.iter().map(<T as Measure>::size_of).sum(),
-            metadata: <Self as BuildFilter<T>>::size_of(&remote_filter)
-                + sketch_size * CODED_SYMBOL_SIZE,
-            download: tracker.download(),
-        });
-
         let local_only_hashes_fp = local_iblt.get_local_only_symbols();
         let remote_only_hashes_fp = local_iblt.get_remote_only_symbols();
-
+        
+        let exec_time = Instant::now();
         let local_only_elements_fp: Vec<_> = local_only_hashes_fp
             .into_iter()
             .map(|hash| local_hashes[&hash].clone())
             .collect();
+        let t_dec_local_hashes_to_elem = exec_time.elapsed();
+
+
+        //message with just received filter + sketch
+        tracker.increment_state(local_unknown.iter().map(<T as Measure>::size_of).sum());
+        tracker.increment_metadata(<Self as BuildFilter<T>>::size_of(&remote_filter)
+                + sketch_size * CODED_SYMBOL_SIZE);
 
         // 7. Send remote unknown state detected using the BF
         //    Send local only state due to false positives
         //    Send remote only hashes to request for remote only state due to false positives
 
-        tracker.register(DefaultEvent::LocalToRemote {
-            state: remote_unknown
-                .iter()
-                .chain(&local_only_elements_fp)
-                .map(T::size_of)
-                .sum(),
-            metadata: remote_only_hashes_fp.len() * mem::size_of::<u64>(),
-            upload: tracker.upload(),
-        });
+        tracker.increment_state(
+            remote_unknown
+            .iter()
+            .chain(&local_only_elements_fp)
+            .map(T::size_of)
+            .sum()
+        );
+        tracker.increment_metadata(remote_only_hashes_fp.len() * mem::size_of::<u64>());
+
+        let exec_time = Instant::now();
 
         let remote_only_elements_fp: Vec<_> = remote_only_hashes_fp
             .into_iter()
             .map(|hash| remote_hashes[&hash].clone())
             .collect();
 
+        let t_dec_remote_hashes_to_elem = exec_time.elapsed();
+
         // 8. Send remote only state due to false positives
-        tracker.register(DefaultEvent::RemoteToLocal {
-            state: remote_only_elements_fp
+        tracker.increment_state(
+remote_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum(),
-            metadata: 0,
-            download: tracker.download(),
-        });
+                .sum()
+        );
 
+        tracker.increment_t_enc(
+            local_filter.t_enc()
+                        + remote_filter.t_enc()
+                        + local_iblt.t_enc()
+                        + t_enc_local_elements_to_hashes
+                        + t_enc_remote_elements_to_hashes
+        );
+
+        tracker.increment_t_dec(
+            local_filter.t_dec()
+                        + remote_filter.t_dec()
+                        + local_iblt.t_dec()
+                        + t_dec_local_hashes_to_elem
+                        + t_dec_remote_hashes_to_elem
+        );
 
         remote.extend( remote_unknown);
         remote.extend( local_only_elements_fp);
@@ -189,7 +211,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{tracker::Bandwidth};
 
     #[test]
     fn test_sync() {
@@ -219,14 +240,10 @@ mod tests {
             remote
         };
 
-        let (download, upload) = (Bandwidth::Kbps(0.5), Bandwidth::Kbps(0.5));
-        let mut tracker = DefaultTracker::new(download, upload);
+        let mut tracker = DefaultTracker::new();
         let bloom_buckets = BloomRIBLT::new(0.01);
 
         bloom_buckets.sync(local, remote, &mut tracker);
         assert_eq!(tracker.false_matches(), 0);
-
-        let events = tracker.events();
-        assert_eq!(events.len(), 4);
     }
 }

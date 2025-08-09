@@ -4,7 +4,7 @@ mod symbol;
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BinaryHeap, HashSet},
-    hash::{DefaultHasher, Hasher},
+    hash::{DefaultHasher, Hasher}, time::{Duration, Instant},
 };
 
 use mapping::SymbolMapping;
@@ -96,6 +96,8 @@ pub struct RatelessIBLT<'a, T: Symbol> {
     local_only: Vec<HashedSymbolMapping<'a, T>>,
     remote_only: Vec<HashedSymbolMapping<'a, T>>,
     decoded: HashSet<T>,
+    t_enc: Duration,
+    t_dec: Duration
 }
 
 impl<'a, T: Symbol> RatelessIBLT<'a, T> {
@@ -109,6 +111,8 @@ impl<'a, T: Symbol> RatelessIBLT<'a, T> {
             local_only: Vec::new(),
             remote_only: Vec::new(),
             decoded: HashSet::new(),
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0),
         }
     }
 
@@ -328,17 +332,41 @@ impl<'a, T: Symbol> RatelessIBLT<'a, T> {
             .collect()
     }
 
-    pub fn find_all_differences(&mut self, iblt2: &mut RatelessIBLT<T>) -> usize {
+    pub fn find_all_differences(&mut self, iblt2: &mut RatelessIBLT<T>){
+        let exec_time = Instant::now();
         self.extend_sketch(1);
+        self.t_enc += exec_time.elapsed();
+
+        let exec_time = Instant::now();
         iblt2.extend_sketch(1);
+        self.t_enc += exec_time.elapsed();
         loop {
+            let exec_time = Instant::now();
             self.subtract(&iblt2.sketch);
+            self.t_dec += exec_time.elapsed();
+            let exec_time = Instant::now();
             if self.is_decoded() {
-                return self.sketch.coded_symbols.len();
+                self.t_dec += exec_time.elapsed();
+                return;
             }
+            self.t_dec += exec_time.elapsed();
+
+            let exec_time = Instant::now();
             self.extend_sketch(1);
+            self.t_enc += exec_time.elapsed();
+
+            let exec_time = Instant::now();
             iblt2.extend_sketch(1);
+            self.t_enc += exec_time.elapsed();
         }
+    }
+
+    pub fn t_enc(&self) -> Duration{
+        self.t_enc
+    }
+
+    pub fn t_dec(&self) -> Duration{
+        self.t_dec
     }
 }
 

@@ -2,7 +2,7 @@ use std::{
     cmp::max,
     f64::consts::LN_2,
     hash::{BuildHasher, Hash, RandomState},
-    marker::PhantomData,
+    marker::PhantomData, time::{Duration, Instant},
 };
 
 use bitvec::{bitvec, slice::BitSlice, vec::BitVec};
@@ -12,6 +12,8 @@ pub struct BloomFilter<T: ?Sized> {
     hashers: [RandomState; 2],
     hashes: u64,
     _marker: PhantomData<T>,
+    t_enc: Duration,
+    t_dec: Duration
 }
 
 impl<T> BloomFilter<T>
@@ -35,6 +37,8 @@ where
             hashers: [RandomState::new(), RandomState::new()],
             hashes: k,
             _marker: PhantomData,
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0)
         }
     }
 
@@ -46,6 +50,8 @@ where
             hashers: [RandomState::new(), RandomState::new()],
             hashes: k,
             _marker: PhantomData,
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0)
         }
     }
 
@@ -56,6 +62,8 @@ where
             hashers,
             hashes: k,
             _marker: PhantomData,
+            t_enc: Duration::from_secs(0),
+            t_dec: Duration::from_secs(0)
         }
     }
 
@@ -68,14 +76,31 @@ where
     pub fn hashers(&self) -> [RandomState; 2] {
         self.hashers.clone()
     }
+
+    #[inline]
+    pub fn t_enc(&self) -> Duration {
+        self.t_enc
+    }
+
+    #[inline]
+    pub fn t_dec(&self) -> Duration {
+        self.t_dec
+    }
 }
 
 impl<T> BloomFilter<T>
 where
     T: ?Sized + Hash,
 {
+    pub fn timed_contains(&mut self, value: &T) -> bool {
+        let exec_time = Instant::now();
+        let contains = self.contains(value);
+        self.t_dec += exec_time.elapsed();
+        contains
+    }
+
     #[inline]
-    pub fn contains(&self, value: &T) -> bool {
+    pub fn contains(& self, value: &T) -> bool {
         let h = (
             self.hashers[0].hash_one(value),
             self.hashers[1].hash_one(value),
@@ -89,6 +114,13 @@ where
     }
 
     #[inline]
+    pub fn timed_insert(&mut self, value: &T){
+        let exec_time = Instant::now();
+        self.insert(value);
+        self.t_enc += exec_time.elapsed();
+    }
+
+    #[inline]
     pub fn insert(&mut self, value: &T) {
         let h = (
             self.hashers[0].hash_one(value),
@@ -99,7 +131,7 @@ where
             let bit =
                 usize::try_from(h.0.wrapping_add(i.wrapping_mul(h.1))).unwrap() % self.base.len();
             self.base.set(bit, true);
-        })
+        });
     }
 }
 

@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 
-use std::env;
+use std::{env, fs, path::PathBuf};
+
+use crate::benchmarks::algorithms;
 
 mod benchmarks;
 mod bloom;
@@ -26,8 +28,7 @@ fn main() {
         panic!("expected an argument telling which data type to use")
     }
 
-    match args[1].to_lowercase().as_str() {
-        "variable_size" => benchmarks::algorithms::run_variable_size_experiment(),
-        _ => unreachable!(),
-    };
+    let results_dir = PathBuf::from(args[1].to_lowercase());
+    fs::create_dir_all(&results_dir).expect("Expected to open results dir succesfully");
+    algorithms::run_variable_size_experiment(&results_dir);
 }
