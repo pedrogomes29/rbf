@@ -130,12 +130,16 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
     fig, ax = plt.subplots(figsize=(10, 8))
     fig.subplots_adjust(left=0.2, right=0.95, top=0.9, bottom=0.3)
 
-    ax.xaxis.set_major_formatter(percent_formatter)
+    #ax.xaxis.set_major_formatter(percent_formatter)
     ax.yaxis.set_major_formatter(y_formatter)
     ax.grid(linestyle="--", linewidth=0.5, alpha=0.75)
-    ax.set_xlabel("Similarity", fontsize=25)
+    ax.set_xlabel("Set Difference Cardinality", fontsize=25)
     ax.set_ylabel(metric_name, fontsize=25, labelpad=8)
     ax.tick_params(axis="both", labelsize=20)
+    
+    ax.set_yscale('log')
+    ax.set_xscale('log')
+
 
     legend_handles = []
     for algo, metrics_by_similarity in exp.items():
@@ -222,7 +226,7 @@ def main():
         marker_dict[algo] = markers[i % len(markers)]
         line_style_dict[algo] = line_styles[i % len(line_styles)]
 
-    transmitted = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() + metric.t_dec.total_seconds(), "Encoding + Decoding", second_formatter)
+    transmitted = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Data Transmitted", byte_formatter)
     name = f"{file}/transmitted.pdf"
     save_or_show(transmitted, name)
 
