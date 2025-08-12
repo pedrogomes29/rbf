@@ -37,7 +37,7 @@ impl AngleHeuristicFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
+impl<T: Hash + Clone> StoppingStrategyFactory<T> for AngleHeuristicFactory {
     type Strategy = AngleHeuristic<T>;
 
     fn create(&self, elements: Vec<T>, _sample_size: usize) -> Self::Strategy {
@@ -53,12 +53,10 @@ impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
-    fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
+impl<T: Hash + Clone> StoppingStrategy<T> for AngleHeuristic<T> {
+    fn on_extend(&mut self, bf: &mut RatelessBF<T>) {
         (self.positives, self.negatives) =
-                self.positives.drain(..).partition(|e| sender_bf.contains(e));
-
-        let true_negatives = self.negatives.len() as i32;
+            self.positives.drain(..).partition(|e| bf.contains(e));
 
         let normalized = self.positives.len() as f64 / (self.positives.len() + self.negatives.len()).max(1) as f64;
 
@@ -75,11 +73,15 @@ impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
         self.last_normalized = Some(normalized);
     }
 
-    fn should_stop(&mut self, _: &mut RatelessBF<T>) -> bool {
-        if self.recent_angles.len() == self.window_size {
-            let avg: f64 = self.recent_angles.iter().sum::<f64>() / self.window_size as f64;
-            return avg < self.angle_threshold_deg;
+    fn should_stop(&mut self, _: &mut RatelessBF<T>) -> Option<(Vec<T>, Vec<T>)> {
+        if self.recent_angles.len() < self.window_size {
+            return None;
         }
-        false
+        let avg: f64 = self.recent_angles.iter().sum::<f64>() / self.window_size as f64;
+        if avg >= self.angle_threshold_deg{
+            return None;
+        }
+
+        return Some((self.positives.clone(), self.negatives.clone()));
     }
 }

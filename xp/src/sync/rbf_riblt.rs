@@ -71,32 +71,29 @@ where
         let hasher = RandomState::new();
 
         // 1. Create a rateless bloom filter from the local set and send it to the remote replica.
+        // 2. Partion the remote join-decompositions into *probably* present in both replicas or
+        //    *definitely not* present in the local replica.
         let mut local_filter = self.filter_from(local.clone(), self.m_ratio);
         let stopping_strategy = self
             .stopping_strategy_factory
             .create(remote.clone(), local.len());
-        local_filter.extend_until(stopping_strategy);
+        let (remote_common, local_unknown) = local_filter.extend_until(stopping_strategy);
 
         tracker.increment_metadata(local_filter.size_of());
 
-        // 2. Partion the remote join-decompositions into *probably* present in both replicas or
-        //    *definitely not* present in the local replica.
-        let (remote_common, local_unknown) = self.partition(&local_filter, remote.clone());
 
         // 3. Build a bloom filter from the partion of *probably* common join-decompositions
+        // 4. Partion the local join-decompositions into *probably* present in both replicas or
+        //    *definitely not* present in the remote replica. (same as 2)
         let mut remote_filter = self.filter_from(remote_common.clone(), self.m_ratio);
         let stopping_strategy = self
             .stopping_strategy_factory
             .create(local.clone(), remote_common.len());
 
-        remote_filter.extend_until(stopping_strategy);
+        let (local_common, remote_unknown) = remote_filter.extend_until(stopping_strategy);
 
-        // 4. Partion the local join-decompositions into *probably* present in both replicas or
-        //    *definitely not* present in the remote replica. (same as 2)
         tracker.increment_state(local_unknown.iter().map(<T as Measure>::size_of).sum());
         tracker.increment_metadata(remote_filter.size_of());
-
-        let (local_common, remote_unknown) = self.partition(&remote_filter, local.clone());
 
         // 5. Calculate the hashes of the *probably* common join-decompositions and put them into the sketch
         //    to be streamed for synchronization

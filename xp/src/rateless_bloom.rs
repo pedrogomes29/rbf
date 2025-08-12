@@ -19,7 +19,7 @@ pub trait StoppingStrategyFactory<T: Hash> {
 
 pub trait StoppingStrategy<T: Hash> {
     fn on_extend(&mut self, bf: &mut RatelessBF<T>);
-    fn should_stop(&mut self, bf: &mut RatelessBF<T>) -> bool;
+    fn should_stop(&mut self, bf: &mut RatelessBF<T>) -> Option<(Vec<T>, Vec<T>)>;
 }
 
 pub struct RatelessBF<T: Hash> {
@@ -64,8 +64,7 @@ where
             .all(|filter| filter.contains(value))
     }
 
-    //TODO: extend until returns positives and negatives
-    pub fn extend_until<S: StoppingStrategy<T>>(&mut self, mut strategy: S) {
+    pub fn extend_until<S: StoppingStrategy<T>>(&mut self, mut strategy: S) -> (Vec<T>, Vec<T>) {
         let mut _run = 1;
         loop {
             let exec_time = Instant::now();
@@ -73,10 +72,10 @@ where
             self.t_enc += exec_time.elapsed();
             let exec_time = Instant::now();
             strategy.on_extend(self);
-            if strategy.should_stop(self) {
+            if let Some(partitioned_elements) = strategy.should_stop(self) {
                 self.t_dec += exec_time.elapsed();
                 //eprintln!("Coverged after {run} runs");
-                return;
+                return partitioned_elements;
             }
             self.t_dec += exec_time.elapsed();
             _run += 1;

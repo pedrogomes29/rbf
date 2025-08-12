@@ -68,7 +68,7 @@ impl<T: Hash + Clone> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
+impl<T: Hash + Clone> StoppingStrategy<T> for BayesianSimilarity<T> {
     fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
         let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf
@@ -83,7 +83,7 @@ impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
         self.beta += sender_bf.m - and_ones;
     }
 
-    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
+    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> Option<(Vec<T>, Vec<T>)> {
         (self.positives, self.negatives) =
                 self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
@@ -117,6 +117,10 @@ impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
             )
         };
 
-        confidence > CONFIDENCE_LEVEL
+        if confidence <= CONFIDENCE_LEVEL{
+            return None;
+        }
+
+        return Some((self.positives.clone(), self.negatives.clone()));
     }
 }

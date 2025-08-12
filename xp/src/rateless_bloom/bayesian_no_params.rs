@@ -98,7 +98,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
         self.beta += sender_bf.m - and_ones;
     }
 
-    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
+    fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> Option<(Vec<T>, Vec<T>)> {
         (self.positives, self.negatives) =
                 self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
@@ -131,7 +131,11 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
                 min(n_sender as usize, n_receiver),
             )
         };
+        
+        if confidence <= CONFIDENCE_LEVEL{
+            return None;
+        }
 
-        confidence > CONFIDENCE_LEVEL
+        return Some((self.positives.clone(), self.negatives.clone()));
     }
 }
