@@ -26,20 +26,25 @@ const RATELESS_SET_RECONCILIATION_OVERHEAD: usize = HASH_SIZE
 
 pub struct BayesianNoParams<T: Hash> {
     receiver_bf: RatelessBF<T>,
+    positives: Vec<T>,
+    negatives: Vec<T>,
     original_set_size: usize,
     alpha: usize,
     beta: usize,
 }
 
-impl<T: Hash> BayesianNoParams<T> {
+impl<T: Hash + Clone> BayesianNoParams<T> {
     pub fn new(receiver_data: Vec<T>, m_ratio: f64, original_set_size: usize) -> Self {
         let m = (receiver_data.len() as f64 * m_ratio).ceil() as usize;
+        let positives = receiver_data.clone();
         let receiver_bf = RatelessBF::new(receiver_data, m);
         Self {
-            alpha: 1,
-            beta: 1,
             receiver_bf,
             original_set_size,
+            positives,
+            negatives: vec![],
+            alpha: 1,
+            beta: 1,
         }
     }
 }
@@ -94,13 +99,10 @@ impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
     }
 
     fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
-        let true_negatives = self
-            .receiver_bf
-            .data
-            .iter()
-            .filter(|e| !sender_bf.contains(e))
-            .count() as i32;
+        (self.positives, self.negatives) =
+                self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
+        let true_negatives = self.negatives.len() as i32;
         let n_sender = sender_bf.data.len() as i32;
         let m = sender_bf.m;
         let m_bytes = m / 8;

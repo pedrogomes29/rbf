@@ -2,7 +2,8 @@ use super::{RatelessBF, StoppingStrategy, StoppingStrategyFactory};
 use std::{collections::VecDeque, f64::consts::PI, hash::Hash};
 
 pub struct AngleHeuristic<T> {
-    elements: Vec<T>,
+    positives: Vec<T>,
+    negatives: Vec<T>,
     angle_threshold_deg: f64,
     window_size: usize,
     recent_angles: VecDeque<f64>,
@@ -12,7 +13,8 @@ pub struct AngleHeuristic<T> {
 impl<T: Hash> AngleHeuristic<T> {
     pub fn new(elements: Vec<T>, angle_threshold_deg: f64, window_size: usize) -> Self {
         Self {
-            elements,
+            positives: elements,
+            negatives: vec![],
             angle_threshold_deg,
             window_size,
             recent_angles: VecDeque::with_capacity(window_size),
@@ -52,11 +54,13 @@ impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
 }
 
 impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
-    fn on_extend(&mut self, bf: &mut RatelessBF<T>) {
-        let (positives, negatives): (Vec<_>, Vec<_>) =
-            self.elements.drain(..).partition(|e| bf.contains(e));
+    fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
+        (self.positives, self.negatives) =
+                self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
-        let normalized = positives.len() as f64 / (positives.len() + negatives.len()).max(1) as f64;
+        let true_negatives = self.negatives.len() as i32;
+
+        let normalized = self.positives.len() as f64 / (self.positives.len() + self.negatives.len()).max(1) as f64;
 
         if let Some(prev) = self.last_normalized {
             let dy = normalized - prev;
@@ -69,7 +73,6 @@ impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
         }
 
         self.last_normalized = Some(normalized);
-        self.elements = positives.into_iter().chain(negatives).collect();
     }
 
     fn should_stop(&mut self, _: &mut RatelessBF<T>) -> bool {

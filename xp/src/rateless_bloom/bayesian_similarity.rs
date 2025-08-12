@@ -11,20 +11,25 @@ const CONFIDENCE_LEVEL: f64 = 0.95;
 
 pub struct BayesianSimilarity<T: Hash> {
     receiver_bf: RatelessBF<T>,
+    positives: Vec<T>,
+    negatives: Vec<T>,
     alpha: usize,
     beta: usize,
     target_similarity: f64,
 }
 
-impl<T: Hash> BayesianSimilarity<T> {
+impl<T: Hash + Clone> BayesianSimilarity<T> {
     pub fn new(receiver_data: Vec<T>, target_similarity: f64, m_ratio: f64) -> Self {
         let m = (receiver_data.len() as f64 * m_ratio).ceil() as usize;
+        let positives = receiver_data.clone();
         let receiver_bf = RatelessBF::new(receiver_data, m);
         Self {
+            receiver_bf,
+            positives,
+            negatives: vec![],
             alpha: 1,
             beta: 1,
             target_similarity,
-            receiver_bf,
         }
     }
 }
@@ -43,7 +48,7 @@ impl BayesianSimilarityFactory {
     }
 }
 
-impl<T: Hash> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
+impl<T: Hash + Clone> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
     type Strategy = BayesianSimilarity<T>;
 
     fn create(&self, elements: Vec<T>, sample_size: usize) -> Self::Strategy {
@@ -79,13 +84,11 @@ impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
     }
 
     fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> bool {
-        let true_negatives = self
-            .receiver_bf
-            .data
-            .iter()
-            .filter(|e| !sender_bf.contains(e))
-            .count();
+        (self.positives, self.negatives) =
+                self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
+        let true_negatives = self.negatives.len() as i32;
+        
         let desired_intersection = ((self.target_similarity * self.receiver_bf.data.len() as f64)
             - true_negatives as f64)
             .round() as i32;
