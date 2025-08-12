@@ -11,6 +11,7 @@ use crate::{
 };
 
 pub mod bf_riblt;
+pub mod pinsketch;
 pub mod rbf_riblt;
 pub mod riblt;
 
@@ -24,38 +25,29 @@ pub trait Measure {
     fn size_of(item: &Self) -> usize;
 }
 
-impl Measure for String{
+impl Measure for String {
     fn size_of(item: &Self) -> usize {
         item.len()
     }
 }
 
-pub trait BuildFilter<T: Hash>
-{
+pub trait BuildFilter<T: Hash> {
     fn filter_from(&self, decompositions: &[T], fpr: f64) -> BloomFilter<T> {
         let mut filter = BloomFilter::new(decompositions.len(), fpr);
-        decompositions
-            .iter()
-            .for_each(|e| filter.timed_insert(e));
+        decompositions.iter().for_each(|e| filter.timed_insert(e));
 
         filter
     }
 
-    fn partition(
-        &self,
-        filter: &mut BloomFilter<T>,
-        elements: Vec<T>,
-    ) -> (Vec<T>, Vec<T>) {
-        elements
-            .into_iter()
-            .partition(|e| filter.timed_contains(e))
+    fn partition(&self, filter: &mut BloomFilter<T>, elements: Vec<T>) -> (Vec<T>, Vec<T>) {
+        elements.into_iter().partition(|e| filter.timed_contains(e))
     }
 
     fn size_of(filter: &BloomFilter<T>) -> usize {
         filter.bitslice().chunks(8).count()
             + mem::size_of::<RandomState>() * 2
             + mem::size_of::<u64>()
-    } 
+    }
 }
 
 pub trait BuildRatelessIBLT<T>
@@ -81,13 +73,7 @@ where
         filter
     }
 
-    fn partition(
-        &self,
-        rateless_bf: &RatelessBF<T>,
-        elements: Vec<T>,
-    ) -> (Vec<T>, Vec<T>) {
-        elements
-            .into_iter()
-            .partition(|e| rateless_bf.contains(e))
+    fn partition(&self, rateless_bf: &RatelessBF<T>, elements: Vec<T>) -> (Vec<T>, Vec<T>) {
+        elements.into_iter().partition(|e| rateless_bf.contains(e))
     }
 }

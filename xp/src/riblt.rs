@@ -4,7 +4,8 @@ mod symbol;
 use std::{
     cmp::{Ordering, Reverse},
     collections::{BinaryHeap, HashSet},
-    hash::{DefaultHasher, Hasher}, time::{Duration, Instant},
+    hash::{DefaultHasher, Hasher},
+    time::{Duration, Instant},
 };
 
 use mapping::SymbolMapping;
@@ -97,7 +98,7 @@ pub struct RatelessIBLT<'a, T: Symbol> {
     remote_only: Vec<HashedSymbolMapping<'a, T>>,
     decoded: HashSet<T>,
     t_enc: Duration,
-    t_dec: Duration
+    t_dec: Duration,
 }
 
 impl<'a, T: Symbol> RatelessIBLT<'a, T> {
@@ -332,7 +333,7 @@ impl<'a, T: Symbol> RatelessIBLT<'a, T> {
             .collect()
     }
 
-    pub fn find_all_differences(&mut self, iblt2: &mut RatelessIBLT<T>){
+    pub fn find_all_differences(&mut self, iblt2: &mut RatelessIBLT<T>) {
         let exec_time = Instant::now();
         self.extend_sketch(1);
         self.t_enc += exec_time.elapsed();
@@ -361,11 +362,11 @@ impl<'a, T: Symbol> RatelessIBLT<'a, T> {
         }
     }
 
-    pub fn t_enc(&self) -> Duration{
+    pub fn t_enc(&self) -> Duration {
         self.t_enc
     }
 
-    pub fn t_dec(&self) -> Duration{
+    pub fn t_dec(&self) -> Duration {
         self.t_dec
     }
 }

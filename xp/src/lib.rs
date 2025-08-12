@@ -1,19 +1,22 @@
 use std::{
-    fmt::Display, fs::{File, OpenOptions}, hash::Hash, io::{BufRead, BufReader, Write}, path::Path
+    fmt::Display,
+    fs::{self, File, OpenOptions},
+    hash::Hash,
+    io::{self, BufRead, Write},
+    path::Path,
+    time::Instant,
 };
 
+mod bayesian_estimation;
 mod bloom;
 pub mod rateless_bloom;
 mod riblt;
 pub mod sync;
 mod tracker;
-mod bayesian_estimation;
 
 use crate::{
-    sync::{Algorithm, Measure}, 
-    tracker::{
-        DefaultTracker, Telemetry
-    }
+    sync::{Algorithm, Measure},
+    tracker::{DefaultTracker, Telemetry},
 };
 
 /// Runs the specified protocol and outputs the metrics obtained.
@@ -33,73 +36,95 @@ where
     tracker
 }
 
+fn read_file_to_vec(path: &Path) -> io::Result<Vec<String>> {
+    let file = File::open(path)?;
+    let reader = io::BufReader::new(file);
+    let lines: io::Result<Vec<String>> = reader.lines().collect();
+    lines
+}
 
-
-pub fn run_test<T, A>(algo: &A, input_dir: &Path, seed: usize, cardinality: usize, d: usize, results_dir: &Path)
+pub fn run_test<T, A>(algo: &A, input_dir: &Path, nr_tests: usize, results_dir: &Path)
 where
     T: Clone + Hash + Measure + Eq + From<String>,
     A: Algorithm<T, Tracker = DefaultTracker> + Display,
 {
     let algo_path = results_dir.join(format!("{algo}.csv"));
     let mut results_file = OpenOptions::new()
-    .write(true)
-    .append(true)
-    .create(true)
-    .open(&algo_path)
-    .expect("Expected to successfully open or create file");
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(&algo_path)
+        .expect("Expected to successfully open or create file");
 
-    let input_data_path = input_dir.join(format!("{}", seed));
+    let d_dirs = fs::read_dir(&input_dir)
+        .expect("Failed to read test type directory")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let path = entry.path();
+            if path.is_dir() && path.file_name()?.to_str()?.starts_with("d_") {
+                Some(path)
+            } else {
+                None
+            }
+        });
 
-    let input_data = File::open(&input_data_path)
-        .expect(&format!("Failed to open input file: {}", input_data_path.display()));
-    let reader = BufReader::new(input_data);
+    for (d_idx, d_dir) in d_dirs.enumerate() {
+        // Parse the 'd' value from the directory name (e.g., "d_6000" -> 6000.0).
+        let d_str = d_dir
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .trim_start_matches("d_");
+        let d: usize = d_str
+            .parse()
+            .expect("Failed to parse 'd' from directory name");
 
-    let mut all_strings: Vec<String> = reader.lines()
-        .filter_map(|line| line.ok())
-        .collect();
-    
-    let nlocal_unique = d / 2;
-    let nremote_unique = d / 2;
-    let ncommon = cardinality - nlocal_unique;
-    
-    let required_strings = nlocal_unique + nremote_unique + ncommon;
-    assert!(
-        all_strings.len() >= required_strings,
-        "Input file {} does not contain enough strings. Needed: {}, Found: {}",
-        input_data_path.display(),
-        required_strings,
-        all_strings.len()
-    );
+        println!("Running tests with d = {d} (index = {d_idx})");
+        let exec_time = Instant::now();
 
-    let local_unique_part: Vec<String> = all_strings.drain(0..nlocal_unique).collect();
-    let remote_unique_part: Vec<String> = all_strings.drain(0..nremote_unique).collect();
-    let common_part: Vec<String> = all_strings.drain(0..ncommon).collect();
+        for test_nr in 0..nr_tests {
+            let test_dir = d_dir.join(format!("test_{test_nr}"));
 
-    // Create the final local and remote sets.
-    let mut local: Vec<T> = local_unique_part.into_iter().map(|s| T::from(s)).collect();
-    let mut remote: Vec<T> = remote_unique_part.into_iter().map(|s| T::from(s)).collect();
+            let common_path = test_dir.join("common");
+            let local_only_path = test_dir.join("local_only");
+            let remote_only_path = test_dir.join("remote_only");
 
-    // Add the common elements to both sets.
-    for s in common_part.into_iter() {
-        let common_t = T::from(s);
-        local.push(common_t.clone());
-        remote.push(common_t);
+            // Read the sets from the files.
+            let common_strings = read_file_to_vec(&common_path).expect("Failed to read local file");
+            let local_only_strings =
+                read_file_to_vec(&local_only_path).expect("Failed to read local file");
+            let remote_only_strings =
+                read_file_to_vec(&remote_only_path).expect("Failed to read remote file");
+
+            // Convert Vec<String> to Vec<T> using the From<String> trait.
+            let local: Vec<T> = common_strings
+                .iter()
+                .chain(local_only_strings.iter())
+                .map(|s| s.clone().into())
+                .collect();
+
+            let remote: Vec<T> = common_strings
+                .iter()
+                .chain(remote_only_strings.iter())
+                .map(|s| s.clone().into())
+                .collect();
+
+            let tracker = run(algo, local, remote);
+
+            // Write the results to the file.
+            writeln!(
+                &mut results_file,
+                "{:.2},{},{},{},{}",
+                d,
+                tracker.state(),
+                tracker.metadata(),
+                tracker.t_enc().as_nanos(),
+                tracker.t_dec().as_nanos()
+            )
+            .unwrap();
+        }
+
+        println!("Took {:.2?}", exec_time.elapsed())
     }
-
-    // Run the reconciliation algorithm and get the tracker.
-    let tracker = run(
-        algo,
-        local,
-        remote
-    );
-
-    // Write the results to the file.
-    writeln!(&mut results_file, "{:.2},{},{},{},{}",
-        d,
-        tracker.state(),
-        tracker.metadata(),
-        tracker.t_enc().as_micros(),
-        tracker.t_dec().as_micros()
-    ).unwrap();
-    
 }

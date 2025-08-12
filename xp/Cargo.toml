@@ -11,6 +11,7 @@ bitvec = "1"
 either = "1.12.0"
 statrs = "0.18.0"
 clap = { version = "4.5.43", features = ["derive"] }
+minisketch-rs = "0.1"
 
 [lib]
 path = "src/lib.rs"
@@ -26,6 +27,10 @@ path = "src/bin/rbf_riblt.rs"
 [[bin]]
 name = "bf_riblt"
 path = "src/bin/bf_riblt.rs"
+
+[[bin]]
+name = "pinsketch"
+path = "src/bin/pinsketch.rs"
 
 [[bin]]
 name = "set_generator"

@@ -4,11 +4,10 @@ pub trait Telemetry {
     fn is_ready(&self) -> bool;
     fn state(&self) -> usize;
     fn metadata(&self) -> usize;
-    fn bytes(&self) -> usize;
     fn t_enc(&self) -> Duration;
     fn t_dec(&self) -> Duration;
-    fn increment_state(&mut self, additional_state:usize);
-    fn increment_metadata(&mut self, additional_metadata:usize);
+    fn increment_state(&mut self, additional_state: usize);
+    fn increment_metadata(&mut self, additional_metadata: usize);
     fn increment_t_enc(&mut self, additional_t_enc: Duration);
     fn increment_t_dec(&mut self, additional_t_dec: Duration);
     fn finish(&mut self, false_matches: usize);
@@ -21,7 +20,7 @@ pub struct DefaultTracker {
     metadata: usize,
     t_enc: Duration,
     t_dec: Duration,
-    diffs: Option<usize>
+    diffs: Option<usize>,
 }
 
 impl DefaultTracker {
@@ -49,9 +48,6 @@ impl Telemetry for DefaultTracker {
     fn metadata(&self) -> usize {
         self.metadata
     }
-    fn bytes(&self) -> usize {
-        self.metadata + self.state
-    }
     fn t_enc(&self) -> Duration {
         self.t_enc
     }
@@ -59,10 +55,10 @@ impl Telemetry for DefaultTracker {
         self.t_dec
     }
 
-    fn increment_state(&mut self, additional_state:usize){
+    fn increment_state(&mut self, additional_state: usize) {
         self.state += additional_state
     }
-    fn increment_metadata(&mut self, additional_metadata:usize){
+    fn increment_metadata(&mut self, additional_metadata: usize) {
         self.metadata += additional_metadata
     }
     fn increment_t_enc(&mut self, additional_t_enc: Duration) {

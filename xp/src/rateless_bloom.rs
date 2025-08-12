@@ -1,15 +1,18 @@
 use super::bloom::BloomFilter;
 use std::{
-    cmp::max, error::Error, fmt::{self, Display, Formatter}, hash::{Hash, RandomState}, mem, time::{Duration, Instant}
+    cmp::max,
+    hash::{Hash, RandomState},
+    mem,
+    time::{Duration, Instant},
 };
 
 pub mod angle_heuristic;
-pub mod bayesian_similarity;
 pub mod bayesian_no_params;
+pub mod bayesian_similarity;
 
 pub trait StoppingStrategyFactory<T: Hash> {
     type Strategy: StoppingStrategy<T>;
-    fn create(&self, elements: Vec<T>, sample_size:usize) -> Self::Strategy;
+    fn create(&self, elements: Vec<T>, sample_size: usize) -> Self::Strategy;
     fn print_name(&self) -> String;
     fn print_params(&self) -> String;
 }
@@ -19,23 +22,12 @@ pub trait StoppingStrategy<T: Hash> {
     fn should_stop(&mut self, bf: &mut RatelessBF<T>) -> bool;
 }
 
-#[derive(Debug)]
-struct ConvergenceError(String);
-
-impl Display for ConvergenceError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Error for ConvergenceError {}
-
 pub struct RatelessBF<T: Hash> {
     bloom_filters: Vec<BloomFilter<T>>,
     data: Vec<T>,
     m: usize,
     t_enc: Duration,
-    t_dec: Duration
+    t_dec: Duration,
 }
 
 impl<T> RatelessBF<T>
@@ -48,9 +40,9 @@ where
         Self {
             bloom_filters: Vec::new(),
             data,
-            m: max(m,1),
+            m: max(m, 1),
             t_enc: Duration::from_secs(0),
-            t_dec: Duration::from_secs(0)
+            t_dec: Duration::from_secs(0),
         }
     }
 
@@ -60,7 +52,7 @@ where
         self.bloom_filters.push(filter);
     }
 
-    pub fn extend_with_hashers(&mut self, hashers: [RandomState; 2]){
+    pub fn extend_with_hashers(&mut self, hashers: [RandomState; 2]) {
         let mut filter = BloomFilter::from_raw_parts_with_hashers(self.m, 1, hashers);
         self.data.iter().for_each(|d| filter.insert(d));
         self.bloom_filters.push(filter);
@@ -73,12 +65,9 @@ where
     }
 
     //TODO: extend until returns positives and negatives
-    pub fn extend_until<S: StoppingStrategy<T>>(
-        &mut self,
-        mut strategy: S,
-    ){
+    pub fn extend_until<S: StoppingStrategy<T>>(&mut self, mut strategy: S) {
         let mut _run = 1;
-        loop{
+        loop {
             let exec_time = Instant::now();
             self.extend();
             self.t_enc += exec_time.elapsed();
@@ -90,14 +79,11 @@ where
                 return;
             }
             self.t_dec += exec_time.elapsed();
-            _run+=1;
+            _run += 1;
         }
     }
 
-    pub fn on_extend<S: StoppingStrategy<T>>(
-        &mut self,
-        mut strategy: S,
-    ){
+    pub fn on_extend<S: StoppingStrategy<T>>(&mut self, mut strategy: S) {
         strategy.on_extend(self);
     }
 

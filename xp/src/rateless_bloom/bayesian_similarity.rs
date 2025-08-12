@@ -1,10 +1,13 @@
-use std::{cmp::{max, min}, hash::Hash};
+use std::{
+    cmp::{max, min},
+    hash::Hash,
+};
 
 use crate::bayesian_estimation;
 
 use super::{RatelessBF, StoppingStrategy, StoppingStrategyFactory};
 
-const CONFIDENCE_LEVEL:f64 = 0.95;
+const CONFIDENCE_LEVEL: f64 = 0.95;
 
 pub struct BayesianSimilarity<T: Hash> {
     receiver_bf: RatelessBF<T>,
@@ -43,22 +46,18 @@ impl BayesianSimilarityFactory {
 impl<T: Hash> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
     type Strategy = BayesianSimilarity<T>;
 
-    fn create(&self, elements: Vec<T>, sample_size:usize) -> Self::Strategy {
+    fn create(&self, elements: Vec<T>, sample_size: usize) -> Self::Strategy {
         //assumes elements are sorted randomly so first sample_size elements are a random sample
         //if this is not the case, you should actually take a random sample
         let elements = elements.into_iter().take(sample_size).collect::<Vec<_>>();
 
-        BayesianSimilarity::new(
-            elements,
-            self.target_similarity,
-            self.m_ratio,
-        )
+        BayesianSimilarity::new(elements, self.target_similarity, self.m_ratio)
     }
 
     fn print_name(&self) -> String {
         "Similarity".to_string()
     }
-    
+
     fn print_params(&self) -> String {
         format!("sim={}", self.target_similarity)
     }
@@ -67,7 +66,8 @@ impl<T: Hash> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
 impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
     fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
         let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
-        self.receiver_bf.extend_with_hashers(last_sender_slice.hashers());
+        self.receiver_bf
+            .extend_with_hashers(last_sender_slice.hashers());
 
         let receiver_last_slice = self.receiver_bf.bloom_filters.last().unwrap();
         let mut tmp = last_sender_slice.bitslice().to_bitvec();
@@ -85,33 +85,34 @@ impl<T: Hash> StoppingStrategy<T> for BayesianSimilarity<T> {
             .iter()
             .filter(|e| !sender_bf.contains(e))
             .count();
-        
+
         let desired_intersection = ((self.target_similarity * self.receiver_bf.data.len() as f64)
             - true_negatives as f64)
             .round() as i32;
 
-            const SMALL_FILTER_MAX_SIZE: usize = 2500;
+        const SMALL_FILTER_MAX_SIZE: usize = 2500;
 
-            let confidence = if sender_bf.data.len()<SMALL_FILTER_MAX_SIZE{
-                let n_receiver = self.receiver_bf.data.len();
-                bayesian_estimation::numeric_posterior_tail(
-                    self.alpha, 
-                    self.alpha + self.beta, 
-                    sender_bf.data.len(),
-                    self.receiver_bf.data.len(),
-                    self.receiver_bf.m,
-                    max(desired_intersection,0) as usize,
-                    min(sender_bf.data.len(),n_receiver))
-            }else{
-                bayesian_estimation::probability_converged_beta_tail(
-                    self.alpha as f64,
-                    self.beta as f64,
-                    desired_intersection,
-                    self.receiver_bf.data.len() as i32,
-                    sender_bf.data.len() as i32,
-                    self.receiver_bf.m as i32
-                )
-            };
+        let confidence = if sender_bf.data.len() < SMALL_FILTER_MAX_SIZE {
+            let n_receiver = self.receiver_bf.data.len();
+            bayesian_estimation::numeric_posterior_tail(
+                self.alpha,
+                self.alpha + self.beta,
+                sender_bf.data.len(),
+                self.receiver_bf.data.len(),
+                self.receiver_bf.m,
+                max(desired_intersection, 0) as usize,
+                min(sender_bf.data.len(), n_receiver),
+            )
+        } else {
+            bayesian_estimation::probability_converged_beta_tail(
+                self.alpha as f64,
+                self.beta as f64,
+                desired_intersection,
+                self.receiver_bf.data.len() as i32,
+                sender_bf.data.len() as i32,
+                self.receiver_bf.m as i32,
+            )
+        };
 
         confidence > CONFIDENCE_LEVEL
     }

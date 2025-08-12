@@ -1,10 +1,19 @@
-use std::{collections::{HashMap, HashSet}, fmt::Display, hash::RandomState, marker::PhantomData, mem, time::Instant};
-
-use crate::{
-    riblt::{RatelessIBLT, Symbol}, sync::Measure, tracker::{DefaultTracker, Telemetry}
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+    hash::RandomState,
+    marker::PhantomData,
+    mem,
+    time::Instant,
 };
 
-use std::hash::{Hash, BuildHasher};
+use crate::{
+    riblt::{RatelessIBLT, Symbol},
+    sync::Measure,
+    tracker::{DefaultTracker, Telemetry},
+};
+
+use std::hash::{BuildHasher, Hash};
 
 use super::{Algorithm, BuildRatelessIBLT};
 
@@ -57,8 +66,6 @@ where
         });
         let t_enc_local_elements_to_hashes = exec_time.elapsed();
 
-
-
         let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
 
         // 2. Repeat the procedure from 1., but now on the remote replica.
@@ -70,7 +77,6 @@ where
             remote_hashes.insert(item_hash, e);
         });
         let t_enc_remote_elements_to_hashes = exec_time.elapsed();
-
 
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
 
@@ -91,15 +97,13 @@ where
             .collect();
         let t_dec_remote_hashes_to_elem = exec_time.elapsed();
 
-
-
         // 4. Send remote only state corresponding to remote only hashes,
         //    Send local only hashes to request for local only state
         tracker.increment_state(
             remote_only_elements
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum()
+                .sum(),
         );
         tracker.increment_metadata(local_only_hashes.iter().count() * mem::size_of::<u64>());
 
@@ -110,7 +114,6 @@ where
             .collect();
         let t_dec_local_hashes_to_elem = exec_time.elapsed();
 
-
         // 5. Send local only state corresponding to local only hashes,
         tracker.increment_state(
             local_only_elements
@@ -120,32 +123,25 @@ where
         );
 
         tracker.increment_t_enc(
-            remote_iblt.t_enc()
-            + t_enc_local_elements_to_hashes
-            + t_enc_remote_elements_to_hashes
+            remote_iblt.t_enc() + t_enc_local_elements_to_hashes + t_enc_remote_elements_to_hashes,
         );
 
         tracker.increment_t_dec(
-            remote_iblt.t_dec()
-            + t_dec_local_hashes_to_elem
-            + t_dec_remote_hashes_to_elem
+            remote_iblt.t_dec() + t_dec_local_hashes_to_elem + t_dec_remote_hashes_to_elem,
         );
 
         // 9. Sanity Check
         local.extend(remote_only_elements);
         remote.extend(local_only_elements);
 
-
         let local_set: HashSet<T> = local.into_iter().collect();
         let remote_set: HashSet<T> = remote.into_iter().collect();
 
         // Elements only in local_vec
-        let local_only = local_set
-            .difference(&remote_set);
+        let local_only = local_set.difference(&remote_set);
 
         // Elements only in remote_vec
-        let remote_only = remote_set
-            .difference(&local_set);
+        let remote_only = remote_set.difference(&local_set);
 
         let false_matches = local_only.count() + remote_only.count();
         tracker.finish(false_matches);

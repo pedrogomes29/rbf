@@ -10,9 +10,7 @@ pub fn probability_converged_beta_tail(
 ) -> f64 {
     let y = 1.0 - 1.0 / m as f64;
 
-    let theta_target = 1.0
-        - y.powi(n_sender)
-        - y.powi(n_receiver)
+    let theta_target = 1.0 - y.powi(n_sender) - y.powi(n_receiver)
         + y.powi(n_sender + n_receiver - desired_intersection);
 
     if let Ok(beta_dist) = Beta::new(alpha, beta) {
@@ -45,9 +43,7 @@ pub fn numeric_posterior_tail(
     let mut denominator = 0.0;
 
     for i in 0..=imax {
-        let theta = 1.0
-            - y.powi(n_sender as i32)
-            - y.powi(n_receiver as i32)
+        let theta = 1.0 - y.powi(n_sender as i32) - y.powi(n_receiver as i32)
             + y.powi((n_sender + n_receiver - i) as i32);
 
         let pmf = (log_binomial_pmf(observed_and_ones, total_bits, theta)).exp();

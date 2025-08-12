@@ -3,14 +3,16 @@ use std::{
     fmt::Display,
     hash::{BuildHasher, Hash, RandomState},
     marker::PhantomData,
-    mem, time::Instant,
+    mem,
+    time::Instant,
 };
 
 use crate::{
-    riblt::RatelessIBLT, sync::Measure, tracker::{DefaultTracker, Telemetry}
+    riblt::RatelessIBLT,
+    sync::Measure,
+    tracker::{DefaultTracker, Telemetry},
 };
 
-use std::time::Duration;
 use super::{Algorithm, BuildFilter};
 
 #[derive(Clone, Copy, Debug)]
@@ -70,12 +72,11 @@ where
 
         // 1. Create a bloom filter from the local elements and send it to the remote replica.
         let mut local_filter = self.filter_from(&local, self.fpr);
-        tracker.increment_metadata( <Self as BuildFilter<T>>::size_of(&local_filter));
+        tracker.increment_metadata(<Self as BuildFilter<T>>::size_of(&local_filter));
 
         // 2. Partion the remote elements into *probably* present in both replicas or
         //    *definitely not* present in the local replica.
         let (remote_common, local_unknown) = self.partition(&mut local_filter, remote.clone());
-
 
         // 3. Build a bloom filter from the partion of *probably* common elements
         let mut remote_filter = self.filter_from(&remote_common, self.fpr);
@@ -92,7 +93,6 @@ where
             remote_hashes
         };
         let t_enc_remote_elements_to_hashes = exec_time.elapsed();
-
 
         let mut remote_iblt = RatelessIBLT::riblt_from(remote_hashes.keys().cloned());
 
@@ -113,18 +113,15 @@ where
         };
         let t_enc_local_elements_to_hashes = exec_time.elapsed();
 
-
         let mut local_iblt = RatelessIBLT::riblt_from(local_hashes.keys().cloned());
         local_iblt.find_all_differences(&mut remote_iblt);
-
-
 
         let sketch_size = local_iblt.sketch.len();
         assert_eq!(sketch_size, remote_iblt.sketch.len());
 
         let local_only_hashes_fp = local_iblt.get_local_only_symbols();
         let remote_only_hashes_fp = local_iblt.get_remote_only_symbols();
-        
+
         let exec_time = Instant::now();
         let local_only_elements_fp: Vec<_> = local_only_hashes_fp
             .into_iter()
@@ -132,11 +129,11 @@ where
             .collect();
         let t_dec_local_hashes_to_elem = exec_time.elapsed();
 
-
         //message with just received filter + sketch
         tracker.increment_state(local_unknown.iter().map(<T as Measure>::size_of).sum());
-        tracker.increment_metadata(<Self as BuildFilter<T>>::size_of(&remote_filter)
-                + sketch_size * CODED_SYMBOL_SIZE);
+        tracker.increment_metadata(
+            <Self as BuildFilter<T>>::size_of(&remote_filter) + sketch_size * CODED_SYMBOL_SIZE,
+        );
 
         // 7. Send remote unknown state detected using the BF
         //    Send local only state due to false positives
@@ -144,10 +141,10 @@ where
 
         tracker.increment_state(
             remote_unknown
-            .iter()
-            .chain(&local_only_elements_fp)
-            .map(T::size_of)
-            .sum()
+                .iter()
+                .chain(&local_only_elements_fp)
+                .map(T::size_of)
+                .sum(),
         );
         tracker.increment_metadata(remote_only_hashes_fp.len() * mem::size_of::<u64>());
 
@@ -162,45 +159,42 @@ where
 
         // 8. Send remote only state due to false positives
         tracker.increment_state(
-remote_only_elements_fp
+            remote_only_elements_fp
                 .iter()
                 .map(<T as Measure>::size_of)
-                .sum()
+                .sum(),
         );
 
         tracker.increment_t_enc(
             local_filter.t_enc()
-                        + remote_filter.t_enc()
-                        + local_iblt.t_enc()
-                        + t_enc_local_elements_to_hashes
-                        + t_enc_remote_elements_to_hashes
+                + remote_filter.t_enc()
+                + local_iblt.t_enc()
+                + t_enc_local_elements_to_hashes
+                + t_enc_remote_elements_to_hashes,
         );
 
         tracker.increment_t_dec(
             local_filter.t_dec()
-                        + remote_filter.t_dec()
-                        + local_iblt.t_dec()
-                        + t_dec_local_hashes_to_elem
-                        + t_dec_remote_hashes_to_elem
+                + remote_filter.t_dec()
+                + local_iblt.t_dec()
+                + t_dec_local_hashes_to_elem
+                + t_dec_remote_hashes_to_elem,
         );
 
-        remote.extend( remote_unknown);
-        remote.extend( local_only_elements_fp);
+        remote.extend(remote_unknown);
+        remote.extend(local_only_elements_fp);
 
-        local.extend( local_unknown);
-        local.extend( remote_only_elements_fp);
-
+        local.extend(local_unknown);
+        local.extend(remote_only_elements_fp);
 
         let local_set: HashSet<T> = local.into_iter().collect();
         let remote_set: HashSet<T> = remote.into_iter().collect();
 
         // Elements only in local_vec
-        let local_only = local_set
-            .difference(&remote_set);
+        let local_only = local_set.difference(&remote_set);
 
         // Elements only in remote_vec
-        let remote_only = remote_set
-            .difference(&local_set);
+        let remote_only = remote_set.difference(&local_set);
 
         let false_matches = local_only.count() + remote_only.count();
         // 9. Sanity check

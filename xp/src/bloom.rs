@@ -2,7 +2,8 @@ use std::{
     cmp::max,
     f64::consts::LN_2,
     hash::{BuildHasher, Hash, RandomState},
-    marker::PhantomData, time::{Duration, Instant},
+    marker::PhantomData,
+    time::{Duration, Instant},
 };
 
 use bitvec::{bitvec, slice::BitSlice, vec::BitVec};
@@ -13,7 +14,7 @@ pub struct BloomFilter<T: ?Sized> {
     hashes: u64,
     _marker: PhantomData<T>,
     t_enc: Duration,
-    t_dec: Duration
+    t_dec: Duration,
 }
 
 impl<T> BloomFilter<T>
@@ -38,7 +39,7 @@ where
             hashes: k,
             _marker: PhantomData,
             t_enc: Duration::from_secs(0),
-            t_dec: Duration::from_secs(0)
+            t_dec: Duration::from_secs(0),
         }
     }
 
@@ -51,7 +52,7 @@ where
             hashes: k,
             _marker: PhantomData,
             t_enc: Duration::from_secs(0),
-            t_dec: Duration::from_secs(0)
+            t_dec: Duration::from_secs(0),
         }
     }
 
@@ -63,7 +64,7 @@ where
             hashes: k,
             _marker: PhantomData,
             t_enc: Duration::from_secs(0),
-            t_dec: Duration::from_secs(0)
+            t_dec: Duration::from_secs(0),
         }
     }
 
@@ -100,7 +101,7 @@ where
     }
 
     #[inline]
-    pub fn contains(& self, value: &T) -> bool {
+    pub fn contains(&self, value: &T) -> bool {
         let h = (
             self.hashers[0].hash_one(value),
             self.hashers[1].hash_one(value),
@@ -114,7 +115,7 @@ where
     }
 
     #[inline]
-    pub fn timed_insert(&mut self, value: &T){
+    pub fn timed_insert(&mut self, value: &T) {
         let exec_time = Instant::now();
         self.insert(value);
         self.t_enc += exec_time.elapsed();

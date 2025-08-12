@@ -1,7 +1,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 use xp::run_test;
-use xp::sync::bf_riblt::BloomRIBLT;
+use xp::sync::pinsketch::PinSketch;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -9,12 +9,10 @@ struct Args {
     input_dir: PathBuf,
     nr_tests: usize,
     results_dir: PathBuf,
-    fpr: f64,
 }
 
 fn main() {
     let args = Args::parse();
-    let algo = BloomRIBLT::new(args.fpr);
-
+    let algo = PinSketch::new();
     run_test::<String, _>(&algo, &args.input_dir, args.nr_tests, &args.results_dir);
 }

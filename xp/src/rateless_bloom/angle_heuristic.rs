@@ -1,5 +1,5 @@
-use std::{collections::VecDeque, f64::consts::PI, hash::Hash};
 use super::{RatelessBF, StoppingStrategy, StoppingStrategyFactory};
+use std::{collections::VecDeque, f64::consts::PI, hash::Hash};
 
 pub struct AngleHeuristic<T> {
     elements: Vec<T>,
@@ -45,7 +45,7 @@ impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
     fn print_name(&self) -> String {
         "Heuristic".to_string()
     }
-    
+
     fn print_params(&self) -> String {
         format!("angle={}", self.angle_threshold_deg)
     }
@@ -53,10 +53,8 @@ impl<T: Hash> StoppingStrategyFactory<T> for AngleHeuristicFactory {
 
 impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
     fn on_extend(&mut self, bf: &mut RatelessBF<T>) {
-        let (positives, negatives): (Vec<_>, Vec<_>) = self
-            .elements
-            .drain(..)
-            .partition(|e| bf.contains(e));
+        let (positives, negatives): (Vec<_>, Vec<_>) =
+            self.elements.drain(..).partition(|e| bf.contains(e));
 
         let normalized = positives.len() as f64 / (positives.len() + negatives.len()).max(1) as f64;
 
@@ -77,9 +75,8 @@ impl<T: Hash> StoppingStrategy<T> for AngleHeuristic<T> {
     fn should_stop(&mut self, _: &mut RatelessBF<T>) -> bool {
         if self.recent_angles.len() == self.window_size {
             let avg: f64 = self.recent_angles.iter().sum::<f64>() / self.window_size as f64;
-            return avg < self.angle_threshold_deg
+            return avg < self.angle_threshold_deg;
         }
         false
     }
 }
-
