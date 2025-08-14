@@ -55,9 +55,14 @@ impl<T: Hash + Clone> StoppingStrategyFactory<T> for AngleHeuristicFactory {
 
 impl<T: Hash + Clone> StoppingStrategy<T> for AngleHeuristic<T> {
     fn on_extend(&mut self, bf: &mut RatelessBF<T>) {
-        (self.positives, self.negatives) =
-            self.positives.drain(..).partition(|e| bf.contains(e));
+        let sender_last_slice = bf.bloom_filters.last().unwrap();
 
+        let new_negatives: Vec<_>;
+        (self.positives, new_negatives) =
+            self.positives.drain(..).partition(|e| sender_last_slice.contains(e));
+            
+        self.negatives.extend(new_negatives);
+            
         let normalized = self.positives.len() as f64 / (self.positives.len() + self.negatives.len()).max(1) as f64;
 
         if let Some(prev) = self.last_normalized {

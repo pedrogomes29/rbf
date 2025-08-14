@@ -1,0 +1,6 @@
+.clang-format
+.idea
+.vscode
+
+build*
+perf

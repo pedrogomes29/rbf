@@ -1,0 +1,8 @@
+.idea
+.vscode
+cmake-*
+results-before
+build*
+/*.txt
+
+tow_estimator

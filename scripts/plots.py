@@ -42,8 +42,7 @@ second_formatter = ticker.EngFormatter(unit="s")
 default_formatter = ticker.ScalarFormatter()
 scientific_notation_formatter = ticker.EngFormatter(places=0, sep="\N{THIN SPACE}")
 
-
-
+TOW_ESTIMATOR_METADATA = 336
 
 algorithm_abbreviations = {
     "Baseline": "Baseline",
@@ -56,7 +55,8 @@ algorithm_abbreviations = {
     "RBloom+Rateless+Heuristic": "RbRsAn",
     "RBloom+Rateless+Similarity": "RbRsSi",
     "RBloom+Rateless+NoParams": "RbRsCo",
-    "PinSketch": "PinSketch"
+    "PinSketch": "PinSketch",
+    "PBS": "PBS"
 }
 
 
@@ -113,12 +113,25 @@ def read_experiment(results_folder: str) -> Experiment:
                 nr_diffs = float(row[0])
                 if nr_diffs not in exp[algo]:
                     exp[algo][nr_diffs] = []
+                    
+                state = int(row[1])
+                metadata = int(row[2])
+                if algo_text=="PBS" or algo_text=="PinSketch":
+                    metadata += TOW_ESTIMATOR_METADATA
+                
+                t_enc = timedelta(microseconds=float(row[3]) / 1000) if row[3] != "0" else None  # t_enc
+                t_dec = timedelta(microseconds=float(row[4]) / 1000) if row[4] != "0" else None  # t_dec
+
+            
                 exp[algo][nr_diffs].append(Metrics(
-                    int(row[1]), # state
-                    int(row[2]), # metadata
-                    timedelta(microseconds=float(row[3]) / 1000) if row[3] != "0" else None,  # t_enc
-                    timedelta(microseconds=float(row[4]) / 1000) if row[4] != "0" else None  # t_dec
-                ))
+                    state,
+                    metadata,
+                    t_enc,
+                    t_dec
+                ))                
+                
+
+
 
     return exp
 
@@ -158,7 +171,6 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
     ax.grid(linestyle="--", linewidth=0.5, alpha=0.75)
     ax.set_xlabel("Set Difference Cardinality", fontsize=20, labelpad=8)
     ax.set_ylabel(metric_name, fontsize=20, labelpad=8)
-    #ax.set_ylim(top=275_000)
     #ax.set_xscale('log')
     #ax.set_yscale('log')
     ax.tick_params(axis="both", labelsize=15)
@@ -258,14 +270,20 @@ def main():
         marker_dict[algo] = markers[i % len(markers)]
         line_style_dict[algo] = line_styles[i % len(line_styles)]
 
-    #communication_overhead_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), "Communication Overhead", scientific_notation_formatter, default_formatter)
-    #save_or_show(communication_overhead_plot, "communication_overhead.pdf")
+    communication_overhead_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), "Communication Overhead", scientific_notation_formatter, default_formatter)
+    save_or_show(communication_overhead_plot, "communication_overhead.pdf")
     
-    #transmitted_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Transmitted", scientific_notation_formatter, byte_formatter)
-    #save_or_show(transmitted_plot, "transmitted_total.pdf")
+    transmitted_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Transmitted", scientific_notation_formatter, byte_formatter)
+    save_or_show(transmitted_plot, "transmitted_total.pdf")
+    
+    transmitted_metadata_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata, "Metadata", scientific_notation_formatter, byte_formatter)
+    save_or_show(transmitted_metadata_plot, "transmitted_metadata.pdf")
 
-    #decoding_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, "Decoding Time", scientific_notation_formatter, second_formatter)
-    #save_or_show(decoding_time_plot, "decoding_time.pdf")
+    encoding_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, "Encoding Time", scientific_notation_formatter, second_formatter)
+    save_or_show(encoding_time_plot, "encoding_time.pdf")
+
+    decoding_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, "Decoding Time", scientific_notation_formatter, second_formatter)
+    save_or_show(decoding_time_plot, "decoding_time.pdf")
 
     computation_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), "Computation Time", scientific_notation_formatter, second_formatter)
     save_or_show(computation_time_plot, "computation_time_pinsketch.pdf")

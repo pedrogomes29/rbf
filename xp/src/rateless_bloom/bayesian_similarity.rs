@@ -1,7 +1,8 @@
 use std::{
-    cmp::{max, min},
-    hash::Hash,
+    cmp::{max, min}, collections::HashSet, hash::Hash
 };
+
+use rand::{seq::SliceRandom, SeedableRng};
 
 use crate::bayesian_estimation;
 
@@ -11,22 +12,24 @@ const CONFIDENCE_LEVEL: f64 = 0.95;
 
 pub struct BayesianSimilarity<T: Hash> {
     receiver_bf: RatelessBF<T>,
-    positives: Vec<T>,
-    negatives: Vec<T>,
+    sampled_positives: Vec<T>,
+    sampled_negatives: Vec<T>,
+    not_chosen_elements: Vec<T>,
     alpha: usize,
     beta: usize,
     target_similarity: f64,
 }
 
 impl<T: Hash + Clone> BayesianSimilarity<T> {
-    pub fn new(receiver_data: Vec<T>, target_similarity: f64, m_ratio: f64) -> Self {
+    pub fn new(receiver_data: Vec<T>, target_similarity: f64, m_ratio: f64, not_chosen_elements: Vec<T>) -> Self {
         let m = (receiver_data.len() as f64 * m_ratio).ceil() as usize;
         let positives = receiver_data.clone();
         let receiver_bf = RatelessBF::new(receiver_data, m);
         Self {
             receiver_bf,
-            positives,
-            negatives: vec![],
+            sampled_positives: positives,
+            sampled_negatives: vec![],
+            not_chosen_elements,
             alpha: 1,
             beta: 1,
             target_similarity,
@@ -48,15 +51,26 @@ impl BayesianSimilarityFactory {
     }
 }
 
-impl<T: Hash + Clone> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
+impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
     type Strategy = BayesianSimilarity<T>;
 
     fn create(&self, elements: Vec<T>, sample_size: usize) -> Self::Strategy {
-        //assumes elements are sorted randomly so first sample_size elements are a random sample
-        //if this is not the case, you should actually take a random sample
-        let elements = elements.into_iter().take(sample_size).collect::<Vec<_>>();
+        let mut rng: rand::prelude::StdRng = rand::rngs::StdRng::seed_from_u64(42);
 
-        BayesianSimilarity::new(elements, self.target_similarity, self.m_ratio)
+        let sampled_elements: Vec<_> = elements
+            .choose_multiple(&mut rng, sample_size)
+            .cloned()
+            .collect();
+
+        let sampled_elements_set: HashSet<_> = sampled_elements.iter().collect();
+
+        let not_chosen_elements: Vec<_> = elements
+            .into_iter()
+            .filter(|e| !sampled_elements_set.contains(e))
+            .collect();
+
+
+        BayesianSimilarity::new(sampled_elements, self.target_similarity, self.m_ratio, not_chosen_elements)
     }
 
     fn print_name(&self) -> String {
@@ -70,13 +84,18 @@ impl<T: Hash + Clone> StoppingStrategyFactory<T> for BayesianSimilarityFactory {
 
 impl<T: Hash + Clone> StoppingStrategy<T> for BayesianSimilarity<T> {
     fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
-        let last_sender_slice = sender_bf.bloom_filters.last().unwrap();
+        let sender_last_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf
-            .extend_with_hashers(last_sender_slice.hashers());
+            .extend_with_hashers(sender_last_slice.hashers());
 
         let receiver_last_slice = self.receiver_bf.bloom_filters.last().unwrap();
-        let mut tmp = last_sender_slice.bitslice().to_bitvec();
+        let mut tmp = sender_last_slice.bitslice().to_bitvec();
         tmp &= receiver_last_slice.bitslice();
+
+        let new_negatives: Vec<_>;
+        (self.sampled_positives, new_negatives) =
+            self.sampled_positives.drain(..).partition(|e| sender_last_slice.contains(e));
+        self.sampled_negatives.extend(new_negatives);
 
         let and_ones = tmp.count_ones();
         self.alpha += and_ones;
@@ -84,10 +103,8 @@ impl<T: Hash + Clone> StoppingStrategy<T> for BayesianSimilarity<T> {
     }
 
     fn should_stop(&mut self, sender_bf: &mut RatelessBF<T>) -> Option<(Vec<T>, Vec<T>)> {
-        (self.positives, self.negatives) =
-                self.positives.drain(..).partition(|e| sender_bf.contains(e));
 
-        let true_negatives = self.negatives.len() as i32;
+        let true_negatives = self.sampled_negatives.len() as i32;
         
         let desired_intersection = ((self.target_similarity * self.receiver_bf.data.len() as f64)
             - true_negatives as f64)
@@ -121,6 +138,12 @@ impl<T: Hash + Clone> StoppingStrategy<T> for BayesianSimilarity<T> {
             return None;
         }
 
-        return Some((self.positives.clone(), self.negatives.clone()));
+        let (mut positives, mut negatives): (Vec<_>, Vec<_>) = 
+            self.not_chosen_elements.drain(..).partition(|e| sender_bf.contains(e));
+
+        positives.extend(self.sampled_positives.clone());
+        negatives.extend(self.sampled_negatives.clone());
+
+        return Some((positives, negatives));
     }
 }

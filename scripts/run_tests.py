@@ -2,21 +2,45 @@
 
 import os
 import subprocess
-import shutil
+from PBS.parameter_calc import get_best_param, TARGET_SUCCESS_RATE, AVG_DIFF, MAX_ROUND, SPLIT_NUM, INF_RATIO 
+import math
+import time
 
 # --- Configuration ---
 PROJECT_DIR = "xp"
 NR_TESTS = 30
 SET_CARDINALITY = 100000
 TEST_DATA_DIR = "./test_data"
-RESULTS_DIR = "./results/30"
+RESULTS_DIR = "./results"
 TEST_NAME = "similarity"
+
+class TowEstimator:
+    project_dir = "pbs_organized/estimators"
+    binary_name = "tow_estimator"
+    
+    def build(self):
+        os.chdir(self.project_dir)
+        subprocess.run(["make"], check=True)
+        os.chdir("../..")
+    
+    def run(self, nr_differences, test):
+        cmd = [
+            os.path.join(self.project_dir, self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}/d_{nr_differences}/test_{test}",
+        ]
+        subprocess.run(cmd, check=True)
 
 class Algorithm:
     """Base class for all algorithm test runners."""
     def run(self):
         """Runs the tests for the algorithm over a list of test differences."""
         raise NotImplementedError("Subclasses must implement the run method.")
+    def to_string(self) -> str:
+        raise NotImplementedError("Subclasses must implement the to_string method.")
+    def build(self):
+        """Builds algorithm binary"""
+        raise NotImplementedError("Subclasses must implement the build method.")
+        
 
 class RIBLT(Algorithm):
     """Test runner for the RIBLT algorithm."""
@@ -24,7 +48,7 @@ class RIBLT(Algorithm):
     binary_name = "riblt"
 
     def run(self):
-        print(f"--- Running tests for: {self.binary_name} ---")
+        print(f"--- Running tests for: {self.to_string()} ---")
         cmd = [
             os.path.join(self.build_dir, self.binary_name),
             f"{TEST_DATA_DIR}/{TEST_NAME}",
@@ -32,14 +56,23 @@ class RIBLT(Algorithm):
             f"{RESULTS_DIR}/{TEST_NAME}",
         ]
         subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "Rateless"
+    
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")
 
 class RBF_RIBLT(Algorithm):
     """Test runner for the RBF_RIBLT algorithm."""
-    build_dir = os.path.join(PROJECT_DIR, "target", "release")
+    project_dir = "xp"
+    build_dir = os.path.join(project_dir, "target", "release")
     binary_name = "rbf_riblt"
 
     def run(self):
-        print(f"--- Running tests for: {self.binary_name} ---")
+        print(f"--- Running tests for: {self.to_string()} ---")
         cmd = [
             os.path.join(self.build_dir, self.binary_name),
             f"{TEST_DATA_DIR}/{TEST_NAME}",
@@ -47,6 +80,14 @@ class RBF_RIBLT(Algorithm):
             f"{RESULTS_DIR}/{TEST_NAME}",
         ]
         subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "RBloom+Rateless+NoParams[m=1.4426950408889634,]"
+    
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")    
                 
 class PinSketch(Algorithm):
     """Test runner for the PinSketch algorithm."""
@@ -54,7 +95,7 @@ class PinSketch(Algorithm):
     binary_name = "pinsketch"
 
     def run(self):
-        print(f"--- Running tests for: {self.binary_name} ---")
+        print(f"--- Running tests for: {self.to_string()} ---")
         cmd = [
             os.path.join(self.build_dir, self.binary_name),
             f"{TEST_DATA_DIR}/{TEST_NAME}",
@@ -62,6 +103,40 @@ class PinSketch(Algorithm):
             f"{RESULTS_DIR}/{TEST_NAME}",
         ]
         subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "PinSketch"
+
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")
+
+class PBS(Algorithm):
+    """Test runner for the PinSketch algorithm."""
+    
+    project_dir = "pbs_organized/reconciliation/PBS"
+    binary_name = "pbs_perf"
+
+
+    def run(self):
+        print(f"--- Running tests for: {self.to_string()} ---")
+        cmd = [
+            os.path.join(self.project_dir,"build", self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}",
+            str(NR_TESTS),
+            f"{RESULTS_DIR}/{TEST_NAME}",
+        ]
+        subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "PBS"
+
+    
+    def build(self):
+        os.chdir(self.project_dir)
+        subprocess.run(["make"], check=True)
+        os.chdir("../../..")
 
 class BF_RIBLT(Algorithm):
     """Test runner for the BF_RIBLT algorithm, which includes an FPR value."""
@@ -72,7 +147,7 @@ class BF_RIBLT(Algorithm):
         self.fpr = fpr
 
     def run(self):
-        print(f"--- Running tests for: {self.binary_name} ---")
+        print(f"--- Running tests for: {self.to_string()} ---")
         cmd = [
             os.path.join(self.build_dir, self.binary_name),
             f"{TEST_DATA_DIR}/{TEST_NAME}",
@@ -81,15 +156,32 @@ class BF_RIBLT(Algorithm):
             str(self.fpr)
         ]
         subprocess.run(cmd, check=True)
+    
+    def to_string(self) -> str:
+        return f"Bloom+Rateless[fpr={int(self.fpr*100)}%]"
 
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")
         
 def ensure_test_data_similarity(set_generator_path):
-    start_similarity = 0
-    end_similarity = 100
-    nr_steps = 20
+    if TEST_NAME=="similarity":
+        start_similarity = 0
+        end_similarity = 1.0
+        nr_steps = 20
+    elif TEST_NAME=="small_d":
+        start_similarity = 0.85
+        end_similarity = 1.0
+        nr_steps = 30
+    else:
+        raise Exception(f"Test name {TEST_NAME} not supported")
     
-    for similarity in range(start_similarity, end_similarity+1, (end_similarity-start_similarity)//nr_steps):
-        similarity = similarity / 100        
+    tow_estimator = TowEstimator()
+    tow_estimator.build()
+    
+    for step in range(nr_steps+1):
+        similarity = start_similarity + (step/nr_steps)*(end_similarity-start_similarity)        
         #derived such that nr_common/(nr_common+nr_differences) = similarity
         nr_common = (2*similarity*SET_CARDINALITY)/(1 + similarity)
         nr_differences = int((SET_CARDINALITY - nr_common)*2)
@@ -104,9 +196,30 @@ def ensure_test_data_similarity(set_generator_path):
                 "--set-cardinality", str(SET_CARDINALITY),
                 "--nr-differences", str(nr_differences),
                 "--output-dir", current_similarity_test_data_folder,
-                "--test-type", TEST_NAME
+                "--test-type", "similarity"
             ]
             subprocess.run(cmd, check=True)
+        
+        if nr_differences==0:
+            continue
+        
+        for test in range(NR_TESTS):
+            test_folder = f"{TEST_DATA_DIR}/{TEST_NAME}/d_{nr_differences}/test_{test}"
+            if not os.path.exists(f"{test_folder}/tow_estimate.txt"):
+                tow_estimator.run(nr_differences, test)
+                
+            #if not os.path.exists(f"{test_folder}/params.txt"):
+            with open(f"{test_folder}/tow_estimate.txt", 'r') as file:
+                file_content = file.read()
+            
+            diff = float(file_content.strip())
+            scaled_diff = int(math.ceil(diff * INF_RATIO))
+
+            (opt_prob, opt_n, opt_t) = get_best_param(scaled_diff, AVG_DIFF, MAX_ROUND, SPLIT_NUM, TARGET_SUCCESS_RATE)
+            
+            with open(f"{test_folder}/params.txt", 'w') as f:
+                f.write(f'{opt_prob} {opt_n} {opt_t}')
+                
 
 def ensure_test_data():
     """Checks for test data and generates it if it's missing."""
@@ -118,7 +231,7 @@ def ensure_test_data():
 
     # Run the generator
     set_generator_path = os.path.join(PROJECT_DIR, "target", "release", "set_generator")
-    if TEST_NAME=="similarity":
+    if TEST_NAME=="similarity" or TEST_NAME=="small_d":
         ensure_test_data_similarity(set_generator_path)
     else:
         raise Exception(f"Test name {TEST_NAME} not supported")
@@ -127,15 +240,7 @@ def ensure_test_data():
 def main():
     """Main function to orchestrate the test run."""
     print("--- Clearing old results and preparing directory ---")
-    shutil.rmtree(f"{RESULTS_DIR}/{TEST_NAME}", ignore_errors=True)
-    os.makedirs(f"{RESULTS_DIR}/{TEST_NAME}")
-
     ensure_test_data()
-
-    print("--- Building all binaries ---")
-    os.chdir(PROJECT_DIR)
-    subprocess.run(["cargo", "build", "--release"], check=True)
-    os.chdir("..")
 
     print("--- Running all tests ---")
     algorithms: list[Algorithm] = [
@@ -144,10 +249,16 @@ def main():
         BF_RIBLT(0.1),
         BF_RIBLT(0.25),
         RBF_RIBLT(),
-        PinSketch()
+        PinSketch(),
+        PBS()
     ]
     
     for algo in algorithms:
+        results_file = f"{RESULTS_DIR}/{TEST_NAME}/{algo.to_string()}.csv"
+        if os.path.isfile(results_file):
+            print(f"Results found, skipping test for {algo.to_string()}")
+            continue
+        algo.build()
         algo.run()
 
     print("--- All tests finished ---")
