@@ -12,7 +12,7 @@ NR_TESTS = 30
 SET_CARDINALITY = 100000
 TEST_DATA_DIR = "./test_data"
 RESULTS_DIR = "./results"
-TEST_NAME = "similarity"
+TEST_NAME = "small_d"
 
 class TowEstimator:
     project_dir = "pbs_organized/estimators"
@@ -208,17 +208,17 @@ def ensure_test_data_similarity(set_generator_path):
             if not os.path.exists(f"{test_folder}/tow_estimate.txt"):
                 tow_estimator.run(nr_differences, test)
                 
-            #if not os.path.exists(f"{test_folder}/params.txt"):
-            with open(f"{test_folder}/tow_estimate.txt", 'r') as file:
-                file_content = file.read()
-            
-            diff = float(file_content.strip())
-            scaled_diff = int(math.ceil(diff * INF_RATIO))
+            if not os.path.exists(f"{test_folder}/params.txt"):
+                with open(f"{test_folder}/tow_estimate.txt", 'r') as file:
+                    file_content = file.read()
+                
+                diff = float(file_content.strip())
+                scaled_diff = int(math.ceil(diff * INF_RATIO))
 
-            (opt_prob, opt_n, opt_t) = get_best_param(scaled_diff, AVG_DIFF, MAX_ROUND, SPLIT_NUM, TARGET_SUCCESS_RATE)
-            
-            with open(f"{test_folder}/params.txt", 'w') as f:
-                f.write(f'{opt_prob} {opt_n} {opt_t}')
+                (opt_prob, opt_n, opt_t) = get_best_param(scaled_diff, AVG_DIFF, MAX_ROUND, SPLIT_NUM, TARGET_SUCCESS_RATE)
+                
+                with open(f"{test_folder}/params.txt", 'w') as f:
+                    f.write(f'{opt_prob} {opt_n} {opt_t}')
                 
 
 def ensure_test_data():
