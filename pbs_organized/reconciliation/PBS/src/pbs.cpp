@@ -31,7 +31,7 @@ using namespace std;
 #define CHECKSUM_LENGTH 32
 
 // a wrapper for xxhash
-uint myhash(uint64_t key, uint seed) { return XXH32(&key, sizeof(key), seed); }
+uint64_t myhash(uint64_t key, uint seed) { return XXH64(&key, sizeof(key), seed); }
 
 // parity encoding v2
 void Encode(const vector<uint64_t> &set,  // elements in a set
