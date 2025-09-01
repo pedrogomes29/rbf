@@ -19,13 +19,13 @@ const fn round_mul(multiplier_millis: usize, value: usize) -> usize {
 }
 
 const RATELESS_SET_RECONCILIATION_MULTIPLIER_MILLIS: usize = 1350;
-const RATELESS_SET_RECONCILIATION_OVERHEAD: usize = HASH_SIZE
+pub const RATELESS_SET_RECONCILIATION_OVERHEAD: usize = HASH_SIZE
     + round_mul(
         RATELESS_SET_RECONCILIATION_MULTIPLIER_MILLIS,
         IBLT_SYMBOL_SIZE,
     );
 
-pub struct BayesianNoParams<T: Hash> {
+pub struct BayesianCost<T: Hash> {
     receiver_bf: RatelessBF<T>,
     sampled_positives: Vec<T>,
     sampled_negatives: Vec<T>,
@@ -34,7 +34,7 @@ pub struct BayesianNoParams<T: Hash> {
     beta: usize,
 }
 
-impl<T: Hash + Clone> BayesianNoParams<T> {
+impl<T: Hash + Clone> BayesianCost<T> {
     pub fn new(receiver_data: Vec<T>, m_ratio: f64, not_chosen_elements: Vec<T>) -> Self {
         let m = (receiver_data.len() as f64 * m_ratio).ceil() as usize;
         let positives = receiver_data.clone();
@@ -50,18 +50,18 @@ impl<T: Hash + Clone> BayesianNoParams<T> {
     }
 }
 
-pub struct BayesianNoParamsFactory {
+pub struct BayesianCostFactory {
     pub m_ratio: f64,
 }
 
-impl BayesianNoParamsFactory {
+impl BayesianCostFactory {
     pub fn new(m_ratio: f64) -> Self {
         Self { m_ratio }
     }
 }
 
-impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianNoParamsFactory {
-    type Strategy = BayesianNoParams<T>;
+impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianCostFactory {
+    type Strategy = BayesianCost<T>;
 
     fn create(&self, elements: Vec<T>, sample_size: usize) -> Self::Strategy {
         let mut rng = rand::rngs::StdRng::seed_from_u64(42);
@@ -79,11 +79,11 @@ impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianNoParamsFactor
             .collect();
 
 
-        BayesianNoParams::new(sampled_elements, self.m_ratio, not_chosen_elements)
+        BayesianCost::new(sampled_elements, self.m_ratio, not_chosen_elements)
     }
 
     fn print_name(&self) -> String {
-        "NoParams".to_string()
+        "BayesianCost".to_string()
     }
 
     fn print_params(&self) -> String {
@@ -91,7 +91,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianNoParamsFactor
     }
 }
 
-impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianNoParams<T> {
+impl<T: Hash + Clone + Eq> StoppingStrategy<T> for BayesianCost<T> {
     fn on_extend(&mut self, sender_bf: &mut RatelessBF<T>) {
         let sender_last_slice = sender_bf.bloom_filters.last().unwrap();
         self.receiver_bf

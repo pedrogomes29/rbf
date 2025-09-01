@@ -4,7 +4,6 @@ import os
 import subprocess
 from PBS.parameter_calc import get_best_param, TARGET_SUCCESS_RATE, AVG_DIFF, MAX_ROUND, SPLIT_NUM, INF_RATIO 
 import math
-import time
 
 # --- Configuration ---
 PROJECT_DIR = "xp"
@@ -12,7 +11,7 @@ NR_TESTS = 30
 SET_CARDINALITY = 100000
 TEST_DATA_DIR = "./test_data"
 RESULTS_DIR = "./results"
-TEST_NAME = "small_d"
+TEST_NAME = "similarity"
 
 class TowEstimator:
     project_dir = "pbs_organized/estimators"
@@ -65,11 +64,11 @@ class RIBLT(Algorithm):
         subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
         os.chdir("..")
 
-class RBF_RIBLT(Algorithm):
-    """Test runner for the RBF_RIBLT algorithm."""
+class RBF_RIBLT_BAYESIAN_COST(Algorithm):
+    """Test runner for the RBF_RIBLT algorithm with the Bayesian Cost Stopping Strategy."""
     project_dir = "xp"
     build_dir = os.path.join(project_dir, "target", "release")
-    binary_name = "rbf_riblt"
+    binary_name = "rbf_riblt_bayesian_cost"
 
     def run(self):
         print(f"--- Running tests for: {self.to_string()} ---")
@@ -82,12 +81,94 @@ class RBF_RIBLT(Algorithm):
         subprocess.run(cmd, check=True)
 
     def to_string(self) -> str:
-        return "RBloom+Rateless+NoParams[m=1.4426950408889634,]"
+        return "RBloom+Rateless+BayesianCost[m=1.4426950408889634,]"
     
     def build(self):
         os.chdir(PROJECT_DIR)
         subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
-        os.chdir("..")    
+        os.chdir("..")   
+        
+class RBF_RIBLT_EXPECTED_COST(Algorithm):
+    """Test runner for the RBF_RIBLT algorithm with the Expected Cost Stopping Strategy."""
+    project_dir = "xp"
+    build_dir = os.path.join(project_dir, "target", "release")
+    binary_name = "rbf_riblt_expected_cost"
+
+    def run(self):
+        print(f"--- Running tests for: {self.to_string()} ---")
+        cmd = [
+            os.path.join(self.build_dir, self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}",
+            str(NR_TESTS),
+            f"{RESULTS_DIR}/{TEST_NAME}",
+        ]
+        subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "RBloom+Rateless+ExpectedCost[m=1.4426950408889634,]"
+    
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")  
+        
+
+class RBF_RIBLT_ANGLE_HEURISTIC(Algorithm):
+    """Test runner for the RBF_RIBLT algorithm with the Angle Heuristic Stopping Strategy."""
+    project_dir = "xp"
+    build_dir = os.path.join(project_dir, "target", "release")
+    binary_name = "rbf_riblt_angle_heuristic"
+
+    def __init__(self, angle_threshold_deg):
+        self.angle_threshold_deg = angle_threshold_deg
+
+    def run(self):
+        print(f"--- Running tests for: {self.to_string()} ---")
+        cmd = [
+            os.path.join(self.build_dir, self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}",
+            str(NR_TESTS),
+            f"{RESULTS_DIR}/{TEST_NAME}",
+            str(self.angle_threshold_deg)
+        ]
+        subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return f"Bloom+Rateless+AngleHeuristic[m=1.4426950408889634,angle={self.angle_threshold_deg}]"
+    
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")
+
+class RBF_RIBLT_BAYESIAN_SIMILARITY(Algorithm):
+    """Test runner for the RBF_RIBLT algorithm with the Bayesian Similarity Stopping Strategy."""
+    project_dir = "xp"
+    build_dir = os.path.join(project_dir, "target", "release")
+    binary_name = "rbf_riblt_bayesian_similarity"
+
+    def __init__(self, target_similarity):
+        self.target_similarity = target_similarity
+
+    def run(self):
+        print(f"--- Running tests for: {self.to_string()} ---")
+        cmd = [
+            os.path.join(self.build_dir, self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}",
+            str(NR_TESTS),
+            f"{RESULTS_DIR}/{TEST_NAME}",
+            str(self.target_similarity)
+        ]
+        subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return f"Bloom+Rateless+BayesianSimilarity[m=1.4426950408889634,sim={self.target_similarity}]"
+    
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..") 
+
                 
 class PinSketch(Algorithm):
     """Test runner for the PinSketch algorithm."""
@@ -248,7 +329,10 @@ def main():
         BF_RIBLT(0.01),
         BF_RIBLT(0.1),
         BF_RIBLT(0.25),
-        RBF_RIBLT(),
+        RBF_RIBLT_BAYESIAN_COST(),
+        RBF_RIBLT_EXPECTED_COST(),
+        RBF_RIBLT_ANGLE_HEURISTIC(0.5),
+        RBF_RIBLT_BAYESIAN_SIMILARITY(0.99),
         PinSketch(),
         PBS()
     ]

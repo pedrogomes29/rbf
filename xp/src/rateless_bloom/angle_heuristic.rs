@@ -45,7 +45,7 @@ impl<T: Hash + Clone> StoppingStrategyFactory<T> for AngleHeuristicFactory {
     }
 
     fn print_name(&self) -> String {
-        "Heuristic".to_string()
+        "AngleHeuristic".to_string()
     }
 
     fn print_params(&self) -> String {

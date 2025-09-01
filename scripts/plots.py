@@ -1,6 +1,10 @@
 # plots.py
 # Plots the data gathered from experiements
 
+import matplotlib
+matplotlib.rcParams['pdf.fonttype'] = 42
+matplotlib.rcParams['ps.fonttype'] = 42
+
 import argparse
 import csv
 import os
@@ -52,9 +56,10 @@ algorithm_abbreviations = {
     "Bloom+Bucketing": "BlBu",
     "Bucketing+Rateless": "BuRs",
     "Bloom+Bucketing+Rateless": "BlBuRs",
-    "RBloom+Rateless+Heuristic": "RbRsAn",
-    "RBloom+Rateless+Similarity": "RbRsSi",
-    "RBloom+Rateless+NoParams": "RbRsCo",
+    "RBloom+Rateless+AngleHeuristic": "RbRsAngle",
+    "RBloom+Rateless+BayesianSimilarity": "RbRsBayesSim",
+    "RBloom+Rateless+BayesianCost": "RbRsBayesCost",
+    "RBloom+Rateless+ExpectedCost": "RbRsExpCost",
     "PinSketch": "PinSketch",
     "PBS": "PBS"
 }
@@ -102,6 +107,8 @@ def read_experiment(results_folder: str) -> Experiment:
         #    continue
         #if algo_text not in ["PinSketch", "Rateless","RBloom+Rateless+NoParams[m=1.4426950408889634,]"]:
         #    continue
+        if not algo_text.startswith("RBloom+Rateless"):
+            continue
         algo = read_algorithm(algo_text)
         if algo not in exp:
             exp[algo] = {}
@@ -173,6 +180,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
     ax.set_ylabel(metric_name, fontsize=20, labelpad=8)
     #ax.set_xscale('log')
     #ax.set_yscale('log')
+    #ax.set_ylim(top=275_000)
     ax.tick_params(axis="both", labelsize=15)
 
     legend_handles = []
@@ -219,7 +227,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
     fig.legend(
         handles=legend_handles,
         loc="lower center",
-        ncol=3,
+        ncol=2,
         frameon=False,
         fontsize=15,
         title_fontsize=30

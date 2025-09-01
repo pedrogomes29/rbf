@@ -7,8 +7,9 @@ use std::{
 };
 
 pub mod angle_heuristic;
-pub mod bayesian_no_params;
+pub mod bayesian_cost;
 pub mod bayesian_similarity;
+pub mod expected_cost;
 
 pub trait StoppingStrategyFactory<T: Hash> {
     type Strategy: StoppingStrategy<T>;

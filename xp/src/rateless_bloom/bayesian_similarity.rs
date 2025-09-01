@@ -74,7 +74,7 @@ impl<T: Hash + Clone + Eq> StoppingStrategyFactory<T> for BayesianSimilarityFact
     }
 
     fn print_name(&self) -> String {
-        "Similarity".to_string()
+        "BayesianSimilarity".to_string()
     }
 
     fn print_params(&self) -> String {
