@@ -43,9 +43,8 @@ where
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "RBloom+Rateless+{}[m={},{}]",
+            "RBloom+Rateless+{}[{}]",
             self.stopping_strategy_factory.print_name(),
-            self.m_ratio,
             self.stopping_strategy_factory.print_params()
         )
     }

@@ -12,6 +12,7 @@ use crate::{
 
 pub mod bf_riblt;
 pub mod pinsketch;
+pub mod full_state_transfer;
 pub mod rbf_riblt;
 pub mod riblt;
 

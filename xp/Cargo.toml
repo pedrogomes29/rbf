@@ -33,5 +33,9 @@ name = "pinsketch"
 path = "src/bin/pinsketch.rs"
 
 [[bin]]
+name = "full_state_transfer"
+path = "src/bin/full_state_transfer.rs"
+
+[[bin]]
 name = "set_generator"
 path = "src/bin/set_generator.rs"

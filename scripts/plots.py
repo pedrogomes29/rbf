@@ -18,12 +18,13 @@ from matplotlib import colormaps
 import numpy as np
 from datetime import timedelta
 import math
+import os
 
 
 class Metrics(NamedTuple):
     state: int
     metadata: int
-    #redundancy: int
+    theoretical_minimum: int
     t_enc: timedelta | None
     t_dec: timedelta | None
 
@@ -37,7 +38,7 @@ class Algorithm(NamedTuple):
         return hash((self.name, frozenset(self.params.items())))
 
 Experiment = Dict[Algorithm, Dict[float, List[Metrics]]]
-
+EXP_NAMES = ["similarity", "small_d"] 
 
 percent_formatter = ticker.PercentFormatter()
 byte_formatter = ticker.EngFormatter(unit="B")
@@ -49,17 +50,10 @@ scientific_notation_formatter = ticker.EngFormatter(places=0, sep="\N{THIN SPACE
 TOW_ESTIMATOR_METADATA = 336
 
 algorithm_abbreviations = {
-    "Baseline": "Baseline",
-    "Bucketing": "Bu",
-    "Rateless": "Rs",
-    "Bloom+Rateless": "BlRs",
-    "Bloom+Bucketing": "BlBu",
-    "Bucketing+Rateless": "BuRs",
-    "Bloom+Bucketing+Rateless": "BlBuRs",
-    "RBloom+Rateless+AngleHeuristic": "RbRsAngle",
-    "RBloom+Rateless+BayesianSimilarity": "RbRsBayesSim",
-    "RBloom+Rateless+BayesianCost": "RbRsBayesCost",
-    "RBloom+Rateless+ExpectedCost": "RbRsExpCost",
+    "FullStateTransfer": "Full State Transfer",
+    "Rateless": "RIBLT",
+    "Bloom+Rateless": "SBF + RIBLT",
+    "RBloom+Rateless+ExpectedCost": "RBF + RIBLT",
     "PinSketch": "PinSketch",
     "PBS": "PBS"
 }
@@ -91,55 +85,68 @@ def read_algorithm(k: str) -> Algorithm:
 
     return Algorithm(name, formatted, False)
 
-
 def read_experiment(results_folder: str) -> Experiment:
     """
     Reads an experiment from the results folder.
     This function assumes that the input is not malformed.
     """
 
-    exp = {}
+    raw_exp = {}
+    NO_REDUNDANT_STATE_ALGO_NAME = "PinSketch"
+    NO_REDUNDANT_STATE_ALGO = None
 
     algorithm_files = [f for f in os.listdir(results_folder) if f.endswith('.csv')]
     for alg_file in algorithm_files:
         algo_text = os.path.splitext(alg_file)[0]
-        #if algo_text in ["PinSketch"]:
-        #    continue
-        #if algo_text not in ["PinSketch", "Rateless","RBloom+Rateless+NoParams[m=1.4426950408889634,]"]:
-        #    continue
-        if not algo_text.startswith("RBloom+Rateless"):
-            continue
         algo = read_algorithm(algo_text)
-        if algo not in exp:
-            exp[algo] = {}
+        if algo_text == NO_REDUNDANT_STATE_ALGO_NAME:
+            NO_REDUNDANT_STATE_ALGO = algo
+        if algo not in raw_exp:
+            raw_exp[algo] = {}
         
         file_path = os.path.join(results_folder, alg_file)
         with open(file_path, 'r', newline='') as csvfile:
             reader = csv.reader(csvfile)
-            for row in reader:
+            for trial_idx, row in enumerate(reader):
                 nr_diffs = float(row[0])
-                if nr_diffs not in exp[algo]:
-                    exp[algo][nr_diffs] = []
+                if nr_diffs not in raw_exp[algo]:
+                    raw_exp[algo][nr_diffs] = []
                     
                 state = int(row[1])
                 metadata = int(row[2])
                 if algo_text=="PBS" or algo_text=="PinSketch":
                     metadata += TOW_ESTIMATOR_METADATA
                 
-                t_enc = timedelta(microseconds=float(row[3]) / 1000) if row[3] != "0" else None  # t_enc
-                t_dec = timedelta(microseconds=float(row[4]) / 1000) if row[4] != "0" else None  # t_dec
+                t_enc = timedelta(microseconds=float(row[3]) / 1000) if row[3] != "0" else None
+                t_dec = timedelta(microseconds=float(row[4]) / 1000) if row[4] != "0" else None
 
-            
-                exp[algo][nr_diffs].append(Metrics(
-                    state,
-                    metadata,
-                    t_enc,
-                    t_dec
-                ))                
+                # Store raw metrics temporarily
+                raw_exp[algo][nr_diffs].append({
+                    'state': state,
+                    'metadata': metadata,
+                    't_enc': t_enc,
+                    't_dec': t_dec
+                })
                 
-
-
-
+    if NO_REDUNDANT_STATE_ALGO is None:
+        raise Exception(f"Expected {NO_REDUNDANT_STATE_ALGO_NAME} to be in experiences to extract theoretical minimum")
+    
+                
+    exp = {}
+    for algo, metrics_by_diffs in raw_exp.items():
+        exp[algo] = {}
+        for nr_diffs, metrics_list in metrics_by_diffs.items():
+            exp[algo][nr_diffs] = []
+            for trial_idx, metric_dict in enumerate(metrics_list):
+                theoretical_min = raw_exp[NO_REDUNDANT_STATE_ALGO][nr_diffs][trial_idx]['state']
+                # Create the final Metrics NamedTuple
+                exp[algo][nr_diffs].append(Metrics(
+                    state=metric_dict['state'],
+                    metadata=metric_dict['metadata'],
+                    t_enc=metric_dict['t_enc'],
+                    t_dec=metric_dict['t_dec'],
+                    theoretical_minimum=theoretical_min
+                ))
     return exp
 
 def fmt_label(label: Algorithm) -> str:
@@ -163,10 +170,10 @@ def sum_times_seconds(metrics: Metrics) -> float | None:
     return t_enc.total_seconds() + t_dec.total_seconds()
 
 def compute_communication_overhead(metric: Metrics) -> float | None:
-    if metric.state == 0:
+    if metric.theoretical_minimum == 0:
         return None
     
-    return (metric.state + metric.metadata) / metric.state
+    return (metric.state + metric.metadata) / metric.theoretical_minimum
 
 def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict: dict[Algorithm, str], line_style_dict: dict[Algorithm, str], metric_function: Callable[[Metrics],int], metric_name: str, x_formatter: ticker.EngFormatter, y_formatter: ticker.EngFormatter) -> Figure:
     """Plot the result of applying metric_function to the measured metrics with multiple measurements"""
@@ -259,42 +266,46 @@ def main():
         if args.show:
             plt.show()
 
+    exps = {}
+    for exp_name in EXP_NAMES:
+        exp = read_experiment(os.path.join(args.results_folder,exp_name))
+        exps[exp_name] = exp
 
-    exp = read_experiment(args.results_folder)
-        
+    all_algorithms = {key for exp in exps.values() for key in exp.keys()}
         
     colormap = colormaps.get_cmap("tab10")
-            
-    colors = {
-        a: colormap(i%10)
-        for i, a in enumerate(exp.keys())
-    }
     line_styles = ['solid','dotted','dashdot']
     markers = ['.', 'v', '*', 'D', 's', 'X', ',', 'o']
 
     marker_dict = {}
     line_style_dict = {}
-    for i, algo in enumerate(exp.keys()):
+    colors_dict = {}
+    
+    for i, algo in enumerate(all_algorithms):
         marker_dict[algo] = markers[i % len(markers)]
         line_style_dict[algo] = line_styles[i % len(line_styles)]
+        colors_dict[algo] = colormap(i%10)
 
-    communication_overhead_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), "Communication Overhead", scientific_notation_formatter, default_formatter)
-    save_or_show(communication_overhead_plot, "communication_overhead.pdf")
-    
-    transmitted_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Transmitted", scientific_notation_formatter, byte_formatter)
-    save_or_show(transmitted_plot, "transmitted_total.pdf")
-    
-    transmitted_metadata_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.metadata, "Metadata", scientific_notation_formatter, byte_formatter)
-    save_or_show(transmitted_metadata_plot, "transmitted_metadata.pdf")
+    for exp_name in EXP_NAMES:
+        exp = exps[exp_name]
+        
+        communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), "Communication Overhead", scientific_notation_formatter, default_formatter)
+        save_or_show(communication_overhead_plot, f"{exp_name}/communication_overhead.pdf")
+        
+        transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Transmitted", scientific_notation_formatter, byte_formatter)
+        save_or_show(transmitted_plot, f"{exp_name}/transmitted_total.pdf")
+        
+        transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, "Metadata", scientific_notation_formatter, byte_formatter)
+        save_or_show(transmitted_metadata_plot, f"{exp_name}/transmitted_metadata.pdf")
 
-    encoding_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, "Encoding Time", scientific_notation_formatter, second_formatter)
-    save_or_show(encoding_time_plot, "encoding_time.pdf")
+        encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, "Encoding Time", scientific_notation_formatter, second_formatter)
+        save_or_show(encoding_time_plot, f"{exp_name}/encoding_time.pdf")
 
-    decoding_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, "Decoding Time", scientific_notation_formatter, second_formatter)
-    save_or_show(decoding_time_plot, "decoding_time.pdf")
+        decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, "Decoding Time", scientific_notation_formatter, second_formatter)
+        save_or_show(decoding_time_plot, f"{exp_name}/decoding_time.pdf")
 
-    computation_time_plot = plot_metric(exp, colors, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), "Computation Time", scientific_notation_formatter, second_formatter)
-    save_or_show(computation_time_plot, "computation_time_pinsketch.pdf")
+        computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), "Computation Time", scientific_notation_formatter, second_formatter)
+        save_or_show(computation_time_plot, f"{exp_name}/computation_time.pdf")
 
 if __name__ == "__main__":
     main()

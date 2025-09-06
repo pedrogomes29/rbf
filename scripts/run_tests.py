@@ -7,7 +7,7 @@ import math
 
 # --- Configuration ---
 PROJECT_DIR = "xp"
-NR_TESTS = 30
+NR_TESTS = 30 #number of trials per measurement
 SET_CARDINALITY = 100000
 TEST_DATA_DIR = "./test_data"
 RESULTS_DIR = "./results"
@@ -81,7 +81,7 @@ class RBF_RIBLT_BAYESIAN_COST(Algorithm):
         subprocess.run(cmd, check=True)
 
     def to_string(self) -> str:
-        return "RBloom+Rateless+BayesianCost[m=1.4426950408889634,]"
+        return "RBloom+Rateless+BayesianCost[]"
     
     def build(self):
         os.chdir(PROJECT_DIR)
@@ -105,7 +105,7 @@ class RBF_RIBLT_EXPECTED_COST(Algorithm):
         subprocess.run(cmd, check=True)
 
     def to_string(self) -> str:
-        return "RBloom+Rateless+ExpectedCost[m=1.4426950408889634,]"
+        return "RBloom+Rateless+ExpectedCost[]"
     
     def build(self):
         os.chdir(PROJECT_DIR)
@@ -134,7 +134,7 @@ class RBF_RIBLT_ANGLE_HEURISTIC(Algorithm):
         subprocess.run(cmd, check=True)
 
     def to_string(self) -> str:
-        return f"Bloom+Rateless+AngleHeuristic[m=1.4426950408889634,angle={self.angle_threshold_deg}]"
+        return f"RBloom+Rateless+AngleHeuristic[angle={self.angle_threshold_deg}]"
     
     def build(self):
         os.chdir(PROJECT_DIR)
@@ -162,7 +162,7 @@ class RBF_RIBLT_BAYESIAN_SIMILARITY(Algorithm):
         subprocess.run(cmd, check=True)
 
     def to_string(self) -> str:
-        return f"Bloom+Rateless+BayesianSimilarity[m=1.4426950408889634,sim={self.target_similarity}]"
+        return f"RBloom+Rateless+BayesianSimilarity[sim={self.target_similarity}]"
     
     def build(self):
         os.chdir(PROJECT_DIR)
@@ -187,6 +187,29 @@ class PinSketch(Algorithm):
 
     def to_string(self) -> str:
         return "PinSketch"
+
+    def build(self):
+        os.chdir(PROJECT_DIR)
+        subprocess.run(["cargo", "build", "--release", "--bin", self.binary_name], check=True)
+        os.chdir("..")
+        
+class FullStateTransfer(Algorithm):
+    """Test runner for the FullStateTransfer algorithm."""
+    build_dir = os.path.join(PROJECT_DIR, "target", "release")
+    binary_name = "full_state_transfer"
+
+    def run(self):
+        print(f"--- Running tests for: {self.to_string()} ---")
+        cmd = [
+            os.path.join(self.build_dir, self.binary_name),
+            f"{TEST_DATA_DIR}/{TEST_NAME}",
+            str(NR_TESTS),
+            f"{RESULTS_DIR}/{TEST_NAME}",
+        ]
+        subprocess.run(cmd, check=True)
+
+    def to_string(self) -> str:
+        return "FullStateTransfer"
 
     def build(self):
         os.chdir(PROJECT_DIR)
@@ -324,17 +347,19 @@ def main():
     ensure_test_data()
 
     print("--- Running all tests ---")
-    algorithms: list[Algorithm] = [
-        RIBLT(),
-        BF_RIBLT(0.01),
-        BF_RIBLT(0.1),
-        BF_RIBLT(0.25),
-        RBF_RIBLT_BAYESIAN_COST(),
-        RBF_RIBLT_EXPECTED_COST(),
-        RBF_RIBLT_ANGLE_HEURISTIC(0.5),
-        RBF_RIBLT_BAYESIAN_SIMILARITY(0.99),
+        
+    algorithms: list[Algorithm] = []
+    
+    if TEST_NAME=="similarity":
+        #fpr from 0.5% to 50% with 5% increments
+        algorithms  += [BF_RIBLT(fpr_times_two / 200) for fpr_times_two in range(1, 101)]
+
+    algorithms += [
         PinSketch(),
-        PBS()
+        RIBLT(),
+        RBF_RIBLT_EXPECTED_COST(),
+        PBS(),
+        FullStateTransfer()
     ]
     
     for algo in algorithms:
