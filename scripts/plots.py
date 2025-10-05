@@ -53,6 +53,7 @@ algorithm_abbreviations = {
     "FullStateTransfer": "Full State Transfer",
     "Rateless": "RIBLT",
     "Bloom+Rateless": "SBF + RIBLT",
+    "OptimalBloom+Rateless": "Optimal SBF + RIBLT",
     "RBloom+Rateless+ExpectedCost": "RBF + RIBLT",
     "PinSketch": "PinSketch",
     "PBS": "PBS"
@@ -94,6 +95,8 @@ def read_experiment(results_folder: str) -> Experiment:
     raw_exp = {}
     NO_REDUNDANT_STATE_ALGO_NAME = "PinSketch"
     NO_REDUNDANT_STATE_ALGO = None
+    
+    bloom_algorithms = {}
 
     algorithm_files = [f for f in os.listdir(results_folder) if f.endswith('.csv')]
     for alg_file in algorithm_files:
@@ -127,11 +130,44 @@ def read_experiment(results_folder: str) -> Experiment:
                     't_enc': t_enc,
                     't_dec': t_dec
                 })
-                
+
+        # Store Bloom+Rateless algorithms separately for later analysis
+        if algo.name == "Bloom+Rateless":
+            bloom_algorithms[algo] = raw_exp[algo]
+            
     if NO_REDUNDANT_STATE_ALGO is None:
         raise Exception(f"Expected {NO_REDUNDANT_STATE_ALGO_NAME} to be in experiences to extract theoretical minimum")
+        
+    # --- New Logic: Find Optimal Bloom+Rateless configuration ---
+    optimal_bloom_data = {}
     
+    # Get all the 'nr_diffs' values from the Bloom+Rateless algorithms
+    all_diffs = set()
+    for diff_data in bloom_algorithms.values():
+        all_diffs.update(diff_data.keys())
+    
+    for nr_diffs in all_diffs:
+        min_cost = float('inf')
+        optimal_metrics = None
+        
+        for algo, diff_data in bloom_algorithms.items():
+            if nr_diffs in diff_data:
+                # Calculate the average communication cost for this FPR and diff
+                avg_cost = np.mean([m['state'] + m['metadata'] for m in diff_data[nr_diffs]])
                 
+                if avg_cost < min_cost:
+                    min_cost = avg_cost
+                    optimal_metrics = diff_data[nr_diffs]
+
+        if optimal_metrics:
+            optimal_bloom_data[nr_diffs] = optimal_metrics
+    
+    if optimal_bloom_data:
+        optimal_algo = Algorithm("OptimalBloom+Rateless", {}, False)
+        raw_exp[optimal_algo] = optimal_bloom_data
+
+    # --- End of New Logic ---
+
     exp = {}
     for algo, metrics_by_diffs in raw_exp.items():
         exp[algo] = {}
@@ -175,7 +211,7 @@ def compute_communication_overhead(metric: Metrics) -> float | None:
     
     return (metric.state + metric.metadata) / metric.theoretical_minimum
 
-def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict: dict[Algorithm, str], line_style_dict: dict[Algorithm, str], metric_function: Callable[[Metrics],int], metric_name: str, x_formatter: ticker.EngFormatter, y_formatter: ticker.EngFormatter) -> Figure:
+def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict: dict[Algorithm, str], line_style_dict: dict[Algorithm, str], metric_function: Callable[[Metrics],int], filter_function: Callable[[Algorithm], bool], metric_name: str, x_formatter: ticker.EngFormatter, y_formatter: ticker.EngFormatter) -> Figure:
     """Plot the result of applying metric_function to the measured metrics with multiple measurements"""
     fig, ax = plt.subplots(figsize=(10, 8))
     fig.subplots_adjust(left=0.2, right=0.95, top=0.9, bottom=0.3)
@@ -192,6 +228,8 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
 
     legend_handles = []
     for algo, metrics_by_diffs in exp.items():
+        if not filter_function(algo):
+            continue
         # Get sorted similarity values and corresponding lists of measurements
         diffs = sorted(metrics_by_diffs.keys())
         
@@ -271,8 +309,9 @@ def main():
         exp = read_experiment(os.path.join(args.results_folder,exp_name))
         exps[exp_name] = exp
 
-    all_algorithms = {key for exp in exps.values() for key in exp.keys()}
-        
+    all_algorithms = list({key for exp in exps.values() for key in exp.keys()})
+    all_algorithms.sort(key=lambda alg: (alg.name, tuple(sorted(alg.params.items()))))
+
     colormap = colormaps.get_cmap("tab10")
     line_styles = ['solid','dotted','dashdot']
     markers = ['.', 'v', '*', 'D', 's', 'X', ',', 'o']
@@ -289,23 +328,64 @@ def main():
     for exp_name in EXP_NAMES:
         exp = exps[exp_name]
         
-        communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), "Communication Overhead", scientific_notation_formatter, default_formatter)
-        save_or_show(communication_overhead_plot, f"{exp_name}/communication_overhead.pdf")
+        def filter_sota_algos_function(algo:Algorithm) -> bool:
+            return algo.name in ["PinSketch","Rateless", "PBS", "RBloom+Rateless+ExpectedCost", "FullStateTransfer"]
         
-        transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, "Transmitted", scientific_notation_formatter, byte_formatter)
-        save_or_show(transmitted_plot, f"{exp_name}/transmitted_total.pdf")
         
-        transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, "Metadata", scientific_notation_formatter, byte_formatter)
-        save_or_show(transmitted_metadata_plot, f"{exp_name}/transmitted_metadata.pdf")
+        
+        #don't include full state transfer due to it's high overhead for low d
+        communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Communication Overhead", scientific_notation_formatter, default_formatter)
+        save_or_show(communication_overhead_plot, f"{exp_name}/sota_communication_overhead.pdf")
+        
+        transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, filter_sota_algos_function, "Transmitted", scientific_notation_formatter, byte_formatter)
+        save_or_show(transmitted_plot, f"{exp_name}/sota_transmitted_total.pdf")
+        
+        transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Metadata", scientific_notation_formatter, byte_formatter)
+        save_or_show(transmitted_metadata_plot, f"{exp_name}/sota_transmitted_metadata.pdf")
 
-        encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, "Encoding Time", scientific_notation_formatter, second_formatter)
-        save_or_show(encoding_time_plot, f"{exp_name}/encoding_time.pdf")
+        encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, filter_sota_algos_function, "Encoding Time", scientific_notation_formatter, second_formatter)
+        save_or_show(encoding_time_plot, f"{exp_name}/sota_encoding_time.pdf")
 
-        decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, "Decoding Time", scientific_notation_formatter, second_formatter)
-        save_or_show(decoding_time_plot, f"{exp_name}/decoding_time.pdf")
+        decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, filter_sota_algos_function, "Decoding Time", scientific_notation_formatter, second_formatter)
+        save_or_show(decoding_time_plot, f"{exp_name}/sota_decoding_time.pdf")
 
-        computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), "Computation Time", scientific_notation_formatter, second_formatter)
-        save_or_show(computation_time_plot, f"{exp_name}/computation_time.pdf")
+        computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), filter_sota_algos_function, "Computation Time", scientific_notation_formatter, second_formatter)
+        save_or_show(computation_time_plot, f"{exp_name}/sota_computation_time.pdf")
+        
+        if exp_name=="small_d":
+            encoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Encoding Time", scientific_notation_formatter, second_formatter)
+            save_or_show(encoding_time_plot_no_pinsketch, f"{exp_name}/sota_encoding_time_no_pinsketch.pdf")
+
+            decoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Decoding Time", scientific_notation_formatter, second_formatter)
+            save_or_show(decoding_time_plot_no_pinsketch, f"{exp_name}/sota_decoding_time_no_pinsketch.pdf")
+
+            computation_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Computation Time", scientific_notation_formatter, second_formatter)
+            save_or_show(computation_time_plot_no_pinsketch, f"{exp_name}/sota_computation_time_no_pinsketch.pdf")
+
+        
+        if exp_name=="similarity":
+            def filter_bf_vs_rbf_function(algo:Algorithm) -> bool:
+                return algo.name in ["RBloom+Rateless+ExpectedCost", "OptimalBloom+Rateless"] or (algo.name=="Bloom+Rateless" and algo.params.get("\\epsilon") in ["1\\%","10\\%","25\\%"])
+
+            
+            communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), filter_bf_vs_rbf_function, "Communication Overhead", scientific_notation_formatter, default_formatter)
+            save_or_show(communication_overhead_plot, f"{exp_name}/sbf_vs_rbf_communication_overhead.pdf")
+            
+            transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, filter_bf_vs_rbf_function, "Transmitted", scientific_notation_formatter, byte_formatter)
+            save_or_show(transmitted_plot, f"{exp_name}/sbf_vs_rbf_transmitted_total.pdf")
+            
+            transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, filter_bf_vs_rbf_function, "Metadata", scientific_notation_formatter, byte_formatter)
+            save_or_show(transmitted_metadata_plot, f"{exp_name}/sbf_vs_rbf_transmitted_metadata.pdf")
+
+            encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, filter_bf_vs_rbf_function, "Encoding Time", scientific_notation_formatter, second_formatter)
+            save_or_show(encoding_time_plot, f"{exp_name}/sbf_vs_rbf_encoding_time.pdf")
+
+            decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, filter_bf_vs_rbf_function, "Decoding Time", scientific_notation_formatter, second_formatter)
+            save_or_show(decoding_time_plot, f"{exp_name}/sbf_vs_rbf_decoding_time.pdf")
+
+            computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), filter_bf_vs_rbf_function, "Computation Time", scientific_notation_formatter, second_formatter)
+            save_or_show(computation_time_plot, f"{exp_name}/sbf_vs_rbf_computation_time.pdf")
+        
 
 if __name__ == "__main__":
     main()

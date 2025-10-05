@@ -262,7 +262,7 @@ class BF_RIBLT(Algorithm):
         subprocess.run(cmd, check=True)
     
     def to_string(self) -> str:
-        return f"Bloom+Rateless[fpr={int(self.fpr*100)}%]"
+        return f"Bloom+Rateless[fpr={self.fpr*100:.1f}%]"
 
     def build(self):
         os.chdir(PROJECT_DIR)
