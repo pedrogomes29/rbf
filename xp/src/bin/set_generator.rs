@@ -33,7 +33,7 @@ struct Args {
     #[arg(short, long)]
     output_dir: PathBuf,
 
-    /// The type of test to generate: 'similarity' or 'subset'.
+    /// The type of test to generate: 'symmetric_diff'
     #[arg(short, long)]
     test_type: String,
 }
@@ -84,38 +84,14 @@ fn generate_similarity_test(args: &Args, seed: u64, global_seen: &mut HashSet<St
     write_set_to_file(&test_dir.join("remote_only"), &remote_only_items);
 }
 
-fn generate_subset_test(args: &Args, seed: u64, global_seen: &mut HashSet<String>) {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-
-    let local_size = args.set_cardinality - args.nr_differences;
-    let remote_diffs = args.nr_differences;
-
-    // The local set is the 'common' set of the two
-    let common_items = generate_unique_items(&mut rng, local_size, global_seen);
-    // Remote-only items are the differences
-    let remote_only_items = generate_unique_items(&mut rng, remote_diffs, global_seen);
-    // The local_only set is empty in a subset test
-    let local_only_items: Vec<String> = Vec::new();
-
-    // Create the output directory for this specific test
-    let test_dir = args.output_dir.join(format!("test_{}", seed));
-    fs::create_dir_all(&test_dir).expect("Failed to create output directory for test");
-
-    // Write the three sets to their own files
-    write_set_to_file(&test_dir.join("common"), &common_items);
-    write_set_to_file(&test_dir.join("local_only"), &local_only_items);
-    write_set_to_file(&test_dir.join("remote_only"), &remote_only_items);
-}
-
 fn main() {
     let args = Args::parse();
     let mut global_seen = HashSet::new();
 
     for seed in 0..args.nr_tests {
         match args.test_type.as_str() {
-            "similarity" => generate_similarity_test(&args, seed, &mut global_seen),
-            "subset" => generate_subset_test(&args, seed, &mut global_seen),
-            _ => panic!("Invalid test_type. Please use 'similarity' or 'subset'."),
+            "symmetric_diff" => generate_similarity_test(&args, seed, &mut global_seen),
+            _ => panic!("Invalid test_type. Please use 'symmetric_diff'."),
         }
     }
 }

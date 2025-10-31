@@ -38,12 +38,8 @@ class Algorithm(NamedTuple):
         return hash((self.name, frozenset(self.params.items())))
 
 Experiment = Dict[Algorithm, Dict[float, List[Metrics]]]
-EXP_NAMES = ["similarity", "small_d"] 
+EXP_NAMES = ["full_range", "high_similarity"]
 
-percent_formatter = ticker.PercentFormatter()
-byte_formatter = ticker.EngFormatter(unit="B")
-bit_formatter = ticker.EngFormatter(unit="b")
-second_formatter = ticker.EngFormatter(unit="s")
 default_formatter = ticker.ScalarFormatter()
 scientific_notation_formatter = ticker.EngFormatter(places=0, sep="\N{THIN SPACE}")
 
@@ -211,20 +207,31 @@ def compute_communication_overhead(metric: Metrics) -> float | None:
     
     return (metric.state + metric.metadata) / metric.theoretical_minimum
 
-def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict: dict[Algorithm, str], line_style_dict: dict[Algorithm, str], metric_function: Callable[[Metrics],int], filter_function: Callable[[Algorithm], bool], metric_name: str, x_formatter: ticker.EngFormatter, y_formatter: ticker.EngFormatter) -> Figure:
+def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict: dict[Algorithm, str], line_style_dict: dict[Algorithm, str], metric_function: Callable[[Metrics],int], filter_function: Callable[[Algorithm], bool], metric_name: str, x_formatter: ticker.EngFormatter, y_formatter: ticker.EngFormatter, bbox_to_anchor: tuple[int,...], is_small:bool = True) -> Figure:
     """Plot the result of applying metric_function to the measured metrics with multiple measurements"""
-    fig, ax = plt.subplots(figsize=(10, 8))
-    fig.subplots_adjust(left=0.2, right=0.95, top=0.9, bottom=0.3)
-
+    
+    if is_small:
+        width, length = 4,3
+    else:
+        width, length = 6,4.5
+    
+    fig, ax = plt.subplots(figsize=(width, length))
     ax.xaxis.set_major_formatter(x_formatter)
     ax.yaxis.set_major_formatter(y_formatter)
+
+    FONTSIZE_LABEL = 14
+    FONTSIZE_TICKS = 12
+    FONTSIZE_LEGEND = 10
+    MARKER_SIZE = 4
+    
+    fig.subplots_adjust(left=0.2, right=0.95, top=0.90, bottom=0.20)
+
+    
+    
     ax.grid(linestyle="--", linewidth=0.5, alpha=0.75)
-    ax.set_xlabel("Set Difference Cardinality", fontsize=20, labelpad=8)
-    ax.set_ylabel(metric_name, fontsize=20, labelpad=8)
-    #ax.set_xscale('log')
-    #ax.set_yscale('log')
-    #ax.set_ylim(top=275_000)
-    ax.tick_params(axis="both", labelsize=15)
+    ax.set_xlabel("Set Difference Cardinality", fontsize=FONTSIZE_LABEL, labelpad=3)
+    ax.set_ylabel(metric_name, fontsize=FONTSIZE_LABEL, labelpad=3)
+    ax.tick_params(axis="both", labelsize=FONTSIZE_TICKS)
 
     legend_handles = []
     for algo, metrics_by_diffs in exp.items():
@@ -256,7 +263,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
         marker = marker_dict[algo]
         line_style = line_style_dict[algo]
 
-        line_handle, = ax.plot(filtered_diffs, means, marker=marker, linestyle=line_style, color=color, lw=2, label=label, markersize=8)
+        line_handle, = ax.plot(filtered_diffs, means, marker=marker, linestyle=line_style, color=color, lw=1.5, label=label, markersize=MARKER_SIZE)
         legend_handles.append(line_handle)
 
         # Plot the shaded area for standard deviation
@@ -267,15 +274,26 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
             color=color,
             alpha=0.2
         )
+        
+    x_anchor, y_anchor = bbox_to_anchor
+    if math.isclose(x_anchor, 0.0) and math.isclose(y_anchor, 1.0):
+        computed_legend_loc = 'upper left'
+    elif math.isclose(x_anchor, 1.0) and math.isclose(y_anchor, 1.0):
+        computed_legend_loc = 'upper right'
+    elif math.isclose(x_anchor, 0.0) and math.isclose(y_anchor, 0.0):
+        computed_legend_loc = 'lower left'
+    elif math.isclose(x_anchor, 1.0) and math.isclose(y_anchor, 0.0):
+        computed_legend_loc = 'lower right'
+    else:
+        computed_legend_loc = 'center'
 
-    # Adjust the legend to be outside the plot area
-    fig.legend(
+    ax.legend(
         handles=legend_handles,
-        loc="lower center",
-        ncol=2,
+        bbox_to_anchor=bbox_to_anchor,
+        loc=computed_legend_loc,
         frameon=False,
-        fontsize=15,
-        title_fontsize=30
+        fontsize=FONTSIZE_LEGEND,
+        title_fontsize=FONTSIZE_LEGEND
     )
 
     return fig
@@ -283,7 +301,7 @@ def plot_metric(exp: Experiment, colors: dict[Algorithm, ColorType], marker_dict
 def main():
     """Script that extracts relevant data from logs and produces the plots for each experiment"""
     parser = argparse.ArgumentParser(prog="plots")
-    parser.add_argument("results_folder",)
+    parser.add_argument("results_folder")
     parser.add_argument("--save", action="store_true")
     parser.add_argument("--show", action="store_true")
     args = parser.parse_args()
@@ -333,58 +351,57 @@ def main():
         
         
         
-        #don't include full state transfer due to it's high overhead for low d
-        communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Communication Overhead", scientific_notation_formatter, default_formatter)
-        save_or_show(communication_overhead_plot, f"{exp_name}/sota_communication_overhead.pdf")
-        
-        transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, filter_sota_algos_function, "Transmitted", scientific_notation_formatter, byte_formatter)
-        save_or_show(transmitted_plot, f"{exp_name}/sota_transmitted_total.pdf")
-        
-        transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Metadata", scientific_notation_formatter, byte_formatter)
-        save_or_show(transmitted_metadata_plot, f"{exp_name}/sota_transmitted_metadata.pdf")
+        if exp_name=="high_similarity":
+            #don't include full state transfer due to it's high overhead for low d
+            communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Communication Overhead", scientific_notation_formatter, default_formatter, (1.0,1.0))
+            save_or_show(communication_overhead_plot, f"{exp_name}/sota_communication_overhead.pdf")
+                        
+            transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata/1000, lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Metadata (kB)", scientific_notation_formatter, default_formatter, (0,1.0))
+            save_or_show(transmitted_metadata_plot, f"{exp_name}/sota_transmitted_metadata.pdf")
 
-        encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, filter_sota_algos_function, "Encoding Time", scientific_notation_formatter, second_formatter)
-        save_or_show(encoding_time_plot, f"{exp_name}/sota_encoding_time.pdf")
+            decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, filter_sota_algos_function, "Decoding Time (s)", scientific_notation_formatter, default_formatter, (0,1.0), True)
+            save_or_show(decoding_time_plot, f"{exp_name}/sota_decoding_time_with_pinsketch.pdf")
+            
+            encoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds()*1000 if metric.t_enc is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Encoding Time (ms)", scientific_notation_formatter, default_formatter, (0.5,0.3))
+            save_or_show(encoding_time_plot_no_pinsketch, f"{exp_name}/sota_encoding_time.pdf")
 
-        decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, filter_sota_algos_function, "Decoding Time", scientific_notation_formatter, second_formatter)
-        save_or_show(decoding_time_plot, f"{exp_name}/sota_decoding_time.pdf")
-
-        computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), filter_sota_algos_function, "Computation Time", scientific_notation_formatter, second_formatter)
-        save_or_show(computation_time_plot, f"{exp_name}/sota_computation_time.pdf")
-        
-        if exp_name=="small_d":
-            encoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Encoding Time", scientific_notation_formatter, second_formatter)
-            save_or_show(encoding_time_plot_no_pinsketch, f"{exp_name}/sota_encoding_time_no_pinsketch.pdf")
-
-            decoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Decoding Time", scientific_notation_formatter, second_formatter)
-            save_or_show(decoding_time_plot_no_pinsketch, f"{exp_name}/sota_decoding_time_no_pinsketch.pdf")
-
-            computation_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Computation Time", scientific_notation_formatter, second_formatter)
-            save_or_show(computation_time_plot_no_pinsketch, f"{exp_name}/sota_computation_time_no_pinsketch.pdf")
+            decoding_time_plot_no_pinsketch = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds()*1000 if metric.t_dec is not None else None, lambda algo: filter_sota_algos_function(algo) and algo.name!="PinSketch", "Decoding Time (ms)", scientific_notation_formatter, default_formatter, (0.7,0.66))
+            save_or_show(decoding_time_plot_no_pinsketch, f"{exp_name}/sota_decoding_time.pdf")
 
         
-        if exp_name=="similarity":
+        if exp_name=="full_range":
+            #don't include full state transfer due to it's high overhead for low d
+            communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Communication Overhead", scientific_notation_formatter, default_formatter, (0.75,0.73))
+            save_or_show(communication_overhead_plot, f"{exp_name}/sota_communication_overhead.pdf")
+            
+            transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: (metric.metadata + metric.state)/1000000, filter_sota_algos_function, "Transmitted (MB)", scientific_notation_formatter, default_formatter, (0,1.0), False)
+            save_or_show(transmitted_plot, f"{exp_name}/sota_transmitted_total.pdf")
+            
+            transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata/1000000, lambda algo: filter_sota_algos_function(algo) and algo.name!="FullStateTransfer", "Metadata (MB)", scientific_notation_formatter, default_formatter, (0,1.0))
+            save_or_show(transmitted_metadata_plot, f"{exp_name}/sota_transmitted_metadata.pdf")
+
+            encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds()*1000 if metric.t_enc is not None else None, filter_sota_algos_function, "Encoding Time (ms)", scientific_notation_formatter, default_formatter, (0.5,0.65))
+            save_or_show(encoding_time_plot, f"{exp_name}/sota_encoding_time.pdf")
+
+            decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds()*1000 if metric.t_dec is not None else None, filter_sota_algos_function, "Decoding Time (ms)", scientific_notation_formatter, default_formatter, (0,1.0))
+            save_or_show(decoding_time_plot, f"{exp_name}/sota_decoding_time.pdf")
+            
+            
             def filter_bf_vs_rbf_function(algo:Algorithm) -> bool:
                 return algo.name in ["RBloom+Rateless+ExpectedCost", "OptimalBloom+Rateless"] or (algo.name=="Bloom+Rateless" and algo.params.get("\\epsilon") in ["1\\%","10\\%","25\\%"])
 
             
-            communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), filter_bf_vs_rbf_function, "Communication Overhead", scientific_notation_formatter, default_formatter)
+            communication_overhead_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: compute_communication_overhead(metric), filter_bf_vs_rbf_function, "Communication Overhead", scientific_notation_formatter, default_formatter, (1.0,1.0), False)
             save_or_show(communication_overhead_plot, f"{exp_name}/sbf_vs_rbf_communication_overhead.pdf")
-            
-            transmitted_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata + metric.state, filter_bf_vs_rbf_function, "Transmitted", scientific_notation_formatter, byte_formatter)
-            save_or_show(transmitted_plot, f"{exp_name}/sbf_vs_rbf_transmitted_total.pdf")
-            
-            transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata, filter_bf_vs_rbf_function, "Metadata", scientific_notation_formatter, byte_formatter)
+                        
+            transmitted_metadata_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.metadata/1000000, filter_bf_vs_rbf_function, "Metadata (MB)", scientific_notation_formatter, default_formatter, (0,1.0), False)
             save_or_show(transmitted_metadata_plot, f"{exp_name}/sbf_vs_rbf_transmitted_metadata.pdf")
 
-            encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds() if metric.t_enc is not None else None, filter_bf_vs_rbf_function, "Encoding Time", scientific_notation_formatter, second_formatter)
+            encoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_enc.total_seconds()*1000 if metric.t_enc is not None else None, filter_bf_vs_rbf_function, "Encoding Time (ms)", scientific_notation_formatter, default_formatter, (0.32,0.16), False)
             save_or_show(encoding_time_plot, f"{exp_name}/sbf_vs_rbf_encoding_time.pdf")
 
-            decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds() if metric.t_dec is not None else None, filter_bf_vs_rbf_function, "Decoding Time", scientific_notation_formatter, second_formatter)
+            decoding_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: metric.t_dec.total_seconds()*1000 if metric.t_dec is not None else None, filter_bf_vs_rbf_function, "Decoding Time (ms)", scientific_notation_formatter, default_formatter, (0,1.0), False)
             save_or_show(decoding_time_plot, f"{exp_name}/sbf_vs_rbf_decoding_time.pdf")
-
-            computation_time_plot = plot_metric(exp, colors_dict, marker_dict, line_style_dict, lambda metric: sum_times_seconds(metric), filter_bf_vs_rbf_function, "Computation Time", scientific_notation_formatter, second_formatter)
-            save_or_show(computation_time_plot, f"{exp_name}/sbf_vs_rbf_computation_time.pdf")
         
 
 if __name__ == "__main__":

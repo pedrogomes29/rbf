@@ -48,7 +48,7 @@ impl<T> Default for BloomRIBLT<T> {
 
 impl<T> Display for BloomRIBLT<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Bloom+Rateless[fpr={}%]", self.fpr * 100.0)
+        write!(f, "Bloom+Rateless[fpr={:.1}%]", self.fpr * 100.0)
     }
 }
 
