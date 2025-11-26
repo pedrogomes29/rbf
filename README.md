@@ -6,7 +6,7 @@ This repository provides an implementation of **Rateless Bloom Filters (RBFs)**,
 
 In many distributed systems, reconciliation protocols must handle elements of variable size (e.g., files, database records, bitcoin transactions). When traditional set reconciliation protocols are adapted for this case, they synchronize fixed-size digests of the elements.
 
-This approach becomes inefficient when the number of differences (**d**) is not very small, as the communication cost is proportional to the size of the element digest ($O(d \cdot \text{digest\_size})$). This high overhead is especially problematic after major events like network partitions or extended replica downtime.
+This approach becomes inefficient when the number of differences (**d**) is not very small, as the communication cost is proportional to the size of the element digest O($d \cdot \text{digest size}$). This high overhead is especially problematic after major events like network partitions or extended replica downtime.
 
 ### The Trade-Off Challenge
 
@@ -136,7 +136,7 @@ With all data and parameters ready, the `run_tests.py` script executes the `run`
 
   * Each algorithm executable is provided the **`test_data`** folder as input.
   * It executes the algorithm for **every pair of sets** generated.
-  * The final output is a **CSV file** per algorithm (e.g., `RBFs.csv`), containing key experiment metrics like **transmitted metadata**, **encoding time**, and **decoding time**, which are parseable by the plotting script.
+  * The final output is a **CSV file** per algorithm (e.g., `RBF.csv`), containing key experiment metrics like **transmitted metadata**, **encoding time**, and **decoding time**, which are parseable by the plotting script.
 
 #### `plots.py`: Visualization
 
